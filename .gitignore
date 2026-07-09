@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+
+# Scraper runtime outputs
+scrapy_project/scraped_ads.db
+scrapy_project/*_items.jl

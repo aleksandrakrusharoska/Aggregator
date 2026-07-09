@@ -1,0 +1,17 @@
+User-agent: Petalbot
+Disallow: /
+
+User-agent: Applebot
+Disallow: /
+
+User-agent: Amazonbot
+Disallow: /
+
+User-agent: *
+Allow: /
+Crawl-delay: 20
+Disallow: /mk/Administration/
+Disallow: /al/Administration/
+Disallow: /en/Administration/
+
+Sitemap: https://www.pazar3.mk/sitemap.xml
