@@ -1,20 +1,22 @@
 """
 Run spiders and store new items into a local SQLite DB.
-Usage:
-  python scrape_and_store.py            # run spiders once and exit
-  python scrape_and_store.py --pazar3   # run only pazar3 spider
-  python scrape_and_store.py --reklama5 # run only reklama5 spider
 
-To schedule daily on Windows:
-- Use Task Scheduler to run run_scrape.bat daily (example provided).
+Modes:
+- full: crawl all reachable pages
+- incremental: crawl newest N pages only (daily scheduler mode)
+
+Reliability features:
+- optional Scrapy JOBDIR for resume support
+- optional chunked full crawl (recommended for long pazar3 backfills)
 """
-import subprocess
-import sqlite3
-import json
-from pathlib import Path
-from datetime import datetime
 import argparse
+import json
 import logging
+import sqlite3
+import subprocess
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 
@@ -26,6 +28,7 @@ JLS = {
 DB_PATH = HERE / 'scraped_ads.db'
 DEFAULT_PAZAR3_URL = 'https://www.pazar3.mk/oglasi/elektronika/prodazba-kupuvanje-zamena'
 DEFAULT_REKLAMA5_URL = 'https://reklama5.mk/Search?city=&cat=580&q=&sell=0&sell=1&buy=0&buy=1&trade=0&trade=1&includeOld=0&includeOld=1&includeNew=0&includeNew=1&cargoReady=0&DDVIncluded=0&private=0&company=0&page=1&SortByPrice=0&zz=1&pageView='
+JOBDIR_ROOT = HERE / '.scrapy-jobdirs'
 
 CREATE_SQL = '''
 CREATE TABLE IF NOT EXISTS ads (
@@ -48,10 +51,22 @@ CREATE TABLE IF NOT EXISTS ads (
 '''
 
 
-def run_spider(spider, start_url=None):
+def set_query_page(url, param_name, page_number):
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query[param_name] = [str(page_number)]
+    new_query = urlencode(query, doseq=True)
+    return urlunparse(parsed._replace(query=new_query))
+
+
+def run_spider(spider, start_url=None, page_limit=None, jobdir=None):
     cmd = ['scrapy', 'crawl', spider]
     if start_url:
         cmd += ['-a', f'start_url={start_url}']
+    if page_limit is not None and page_limit > 0:
+        cmd += ['-s', f'CLOSESPIDER_PAGECOUNT={page_limit}']
+    if jobdir:
+        cmd += ['-s', f'JOBDIR={jobdir}']
     logging.info('Running: %s', ' '.join(cmd))
     res = subprocess.run(cmd, cwd=str(HERE))
     if res.returncode != 0:
@@ -102,8 +117,10 @@ def upsert_items(conn, items, source):
         specs = json.dumps(it.get('specs') or {})
         scraped_at = datetime.utcnow().isoformat()
         try:
-            cur.execute('INSERT OR IGNORE INTO ads (ad_url,title,price,currency,location,description,seller_name,phone,images,posted_date,category,condition,specs,source,scraped_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                        (ad_url,title,price,currency,location,description,seller_name,phone,images,posted_date,category,condition,specs,source,scraped_at))
+            cur.execute(
+                'INSERT OR IGNORE INTO ads (ad_url,title,price,currency,location,description,seller_name,phone,images,posted_date,category,condition,specs,source,scraped_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (ad_url, title, price, currency, location, description, seller_name, phone, images, posted_date, category, condition, specs, source, scraped_at),
+            )
             if cur.rowcount == 1:
                 inserted += 1
         except Exception as e:
@@ -112,35 +129,107 @@ def upsert_items(conn, items, source):
     return inserted
 
 
+def ingest_source(conn, source_name):
+    path = JLS[source_name]
+    items = load_jl(path)
+    if not items:
+        logging.info('No items found in %s', path)
+        return 0
+    new_count = upsert_items(conn, items, source_name)
+    logging.info('Inserted %d new items from %s', new_count, source_name)
+    return new_count
+
+
+def run_full_in_chunks(conn, spider, source_name, base_url, page_param, start_page, end_page, chunk_size, use_jobdir):
+    total_new = 0
+    page = start_page
+    while end_page is None or page <= end_page:
+        chunk_url = set_query_page(base_url, page_param, page)
+        chunk_label = f'{spider}_p{page}_n{chunk_size}'
+        jobdir = None
+        if use_jobdir:
+            JOBDIR_ROOT.mkdir(parents=True, exist_ok=True)
+            jobdir = JOBDIR_ROOT / chunk_label
+        rc = run_spider(spider, start_url=chunk_url, page_limit=chunk_size, jobdir=jobdir)
+        if rc != 0:
+            logging.error('Stopping due to spider failure in chunk %s', chunk_label)
+            break
+        total_new += ingest_source(conn, source_name)
+        page += chunk_size
+    return total_new
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--pazar3', action='store_true')
     parser.add_argument('--reklama5', action='store_true')
+    parser.add_argument('--mode', choices=['full', 'incremental'], default='full',
+                        help='full=all pages, incremental=only first N pages (newest-first crawl)')
+    parser.add_argument('--pazar3-pages', type=int, default=3,
+                        help='Pages to crawl for pazar3 in incremental mode')
+    parser.add_argument('--reklama5-pages', type=int, default=3,
+                        help='Pages to crawl for reklama5 in incremental mode')
     parser.add_argument('--pazar3-url', default=DEFAULT_PAZAR3_URL, help='Pazar3 start URL')
     parser.add_argument('--reklama5-url', default=DEFAULT_REKLAMA5_URL, help='Reklama5 start URL')
+    parser.add_argument('--chunked-full', action='store_true',
+                        help='Run full mode in chunks for better reliability')
+    parser.add_argument('--chunk-size', type=int, default=100,
+                        help='Pages per chunk in chunked full mode')
+    parser.add_argument('--start-page', type=int, default=1,
+                        help='Start page for chunked full mode')
+    parser.add_argument('--end-page', type=int, default=0,
+                        help='Optional end page for chunked full mode (0 means no explicit limit)')
+    parser.add_argument('--jobdir', action='store_true',
+                        help='Enable Scrapy JOBDIR resume support')
     args = parser.parse_args()
 
     run_pazar = args.pazar3 or not (args.pazar3 or args.reklama5)
     run_reklama = args.reklama5 or not (args.pazar3 or args.reklama5)
+    end_page = args.end_page if args.end_page > 0 else None
 
-    # Run spiders
-    if run_pazar:
-        run_spider('pazar3', start_url=args.pazar3_url)
-    if run_reklama:
-        run_spider('reklama5', start_url=args.reklama5_url)
-
-    # Load items and upsert into DB
     conn = sqlite3.connect(str(DB_PATH))
     ensure_db(conn)
     total_new = 0
-    for name, path in JLS.items():
-        items = load_jl(path)
-        if not items:
-            logging.info('No items found in %s', path)
-            continue
-        new = upsert_items(conn, items, name)
-        logging.info('Inserted %d new items from %s', new, name)
-        total_new += new
+
+    if run_pazar:
+        if args.mode == 'incremental':
+            run_spider('pazar3', start_url=args.pazar3_url, page_limit=args.pazar3_pages, jobdir=(JOBDIR_ROOT / 'pazar3_incremental' if args.jobdir else None))
+            total_new += ingest_source(conn, 'pazar3')
+        elif args.chunked_full:
+            total_new += run_full_in_chunks(
+                conn=conn,
+                spider='pazar3',
+                source_name='pazar3',
+                base_url=args.pazar3_url,
+                page_param='Page',
+                start_page=args.start_page,
+                end_page=end_page,
+                chunk_size=args.chunk_size,
+                use_jobdir=args.jobdir,
+            )
+        else:
+            run_spider('pazar3', start_url=args.pazar3_url, jobdir=(JOBDIR_ROOT / 'pazar3_full' if args.jobdir else None))
+            total_new += ingest_source(conn, 'pazar3')
+
+    if run_reklama:
+        if args.mode == 'incremental':
+            run_spider('reklama5', start_url=args.reklama5_url, page_limit=args.reklama5_pages, jobdir=(JOBDIR_ROOT / 'reklama5_incremental' if args.jobdir else None))
+            total_new += ingest_source(conn, 'reklama5')
+        elif args.chunked_full:
+            total_new += run_full_in_chunks(
+                conn=conn,
+                spider='reklama5',
+                source_name='reklama5',
+                base_url=args.reklama5_url,
+                page_param='page',
+                start_page=args.start_page,
+                end_page=end_page,
+                chunk_size=args.chunk_size,
+                use_jobdir=args.jobdir,
+            )
+        else:
+            run_spider('reklama5', start_url=args.reklama5_url, jobdir=(JOBDIR_ROOT / 'reklama5_full' if args.jobdir else None))
+            total_new += ingest_source(conn, 'reklama5')
 
     conn.close()
     logging.info('Done. Total new items: %d. DB at %s', total_new, DB_PATH)
