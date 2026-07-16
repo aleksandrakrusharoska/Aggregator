@@ -1,4 +1,34 @@
 import json
+import logging
+from datetime import datetime, timezone
+
+from ads_scraper.normalize import clean_text, parse_price, resolve_posted_date, strip_emoji
+
+logger = logging.getLogger(__name__)
+
+
+class NormalizePipeline:
+    """Clean and normalise every item before it reaches the writer."""
+
+    def process_item(self, item, spider):
+        now_utc = datetime.now(timezone.utc).isoformat()
+        item['scraped_at'] = now_utc
+
+        item['title'] = strip_emoji(clean_text(item.get('title')))
+        item['description'] = strip_emoji(clean_text(item.get('description')))
+        item['location'] = clean_text(item.get('location')) or None
+
+        price_fields = parse_price(item.get('price'))
+        item['price'] = price_fields['price_amount']
+        item['currency'] = item.get('currency') or price_fields['currency']
+        item['price_amount'] = price_fields['price_amount']
+        item['price_eur'] = price_fields['price_eur']
+        item['price_mkd'] = price_fields['price_mkd']
+        item['price_note'] = price_fields['price_note']
+
+        item['posted_date'] = resolve_posted_date(item.get('posted_date'), now_utc)
+
+        return item
 
 
 class JsonWriterPipeline:
@@ -14,3 +44,106 @@ class JsonWriterPipeline:
         line = json.dumps(dict(item), ensure_ascii=False) + "\n"
         self.file.write(line)
         return item
+
+
+class IncrementalCheckPipeline:
+    """
+    In incremental mode, drops items whose ad_url already exists in Supabase.
+    Closes the spider after INCREMENTAL_STOP_AFTER consecutive known items,
+    since listing pages are sorted newest-first.
+    """
+
+    STOP_AFTER = 10
+
+    def open_spider(self, spider):
+        self._known = set()
+        self._consecutive = 0
+        if not spider.crawler.settings.getbool('INCREMENTAL', False):
+            return
+        url = spider.crawler.settings.get('SUPABASE_URL')
+        key = spider.crawler.settings.get('SUPABASE_KEY')
+        if not url or not key:
+            return
+        from supabase import create_client
+        client = create_client(url, key)
+        logger.info('IncrementalCheckPipeline: loading known URLs for %s...', spider.name)
+        offset, batch = 0, 1000
+        while True:
+            rows = (
+                client.table('ads')
+                .select('ad_url')
+                .eq('source', spider.name)
+                .range(offset, offset + batch - 1)
+                .execute()
+                .data
+            )
+            if not rows:
+                break
+            for r in rows:
+                self._known.add(r['ad_url'])
+            if len(rows) < batch:
+                break
+            offset += batch
+        logger.info('IncrementalCheckPipeline: %d known URLs loaded.', len(self._known))
+
+    def process_item(self, item, spider):
+        if not spider.crawler.settings.getbool('INCREMENTAL', False):
+            return item
+        url = item.get('ad_url')
+        if url and url in self._known:
+            self._consecutive += 1
+            logger.debug('Known ad (%d consecutive): %s', self._consecutive, url)
+            if self._consecutive >= self.STOP_AFTER:
+                logger.info('Reached %d consecutive known ads — stopping spider.', self.STOP_AFTER)
+                spider.crawler.engine.close_spider(spider, 'incremental_done')
+            from scrapy.exceptions import DropItem
+            raise DropItem(f'Already in DB: {url}')
+        self._consecutive = 0
+        return item
+
+
+class SupabasePipeline:
+    """Upsert items to Supabase in batches as the spider runs."""
+
+    BATCH_SIZE = 100
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(
+            url=crawler.settings.get('SUPABASE_URL'),
+            key=crawler.settings.get('SUPABASE_KEY'),
+        )
+
+    def __init__(self, url, key):
+        self.url = url
+        self.key = key
+        self.client = None
+        self._batch = []
+
+    def open_spider(self, spider):
+        if not self.url or not self.key:
+            raise RuntimeError('SUPABASE_URL and SUPABASE_KEY must be set in .env')
+        from supabase import create_client
+        self.client = create_client(self.url, self.key)
+        logger.info('Supabase pipeline connected.')
+
+    def close_spider(self, spider):
+        self._flush()
+
+    def process_item(self, item, spider):
+        d = dict(item)
+        # images and specs arrive as Python objects from NormalizePipeline
+        self._batch.append(d)
+        if len(self._batch) >= self.BATCH_SIZE:
+            self._flush()
+        return item
+
+    def _flush(self):
+        if not self._batch:
+            return
+        try:
+            self.client.table('ads').upsert(self._batch, on_conflict='ad_url').execute()
+            logger.debug('Upserted %d items to Supabase.', len(self._batch))
+        except Exception as e:
+            logger.error('Supabase upsert failed (%d items): %s', len(self._batch), e)
+        self._batch = []
