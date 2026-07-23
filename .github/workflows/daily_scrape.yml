@@ -48,6 +48,11 @@ jobs:
             -s CONCURRENT_REQUESTS=2 \
             -s LOG_LEVEL=INFO
 
+      - name: Run LLM parser (new ads only)
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python run_parser_agent.py --limit 200
+
       - name: Run dedup agent
         run: |
           python run_dedup_agent.py

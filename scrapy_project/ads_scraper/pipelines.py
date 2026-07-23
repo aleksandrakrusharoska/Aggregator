@@ -53,7 +53,7 @@ class IncrementalCheckPipeline:
     since listing pages are sorted newest-first.
     """
 
-    STOP_AFTER = 10
+    STOP_AFTER = 50
 
     def open_spider(self, spider):
         self._known = set()
