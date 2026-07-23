@@ -50,5 +50,5 @@ jobs:
 
       - name: Run dedup agent
         run: |
-          python run_dedup_agent.py --clear
+          python run_dedup_agent.py
           python run_dedup_agent.py --same-site
