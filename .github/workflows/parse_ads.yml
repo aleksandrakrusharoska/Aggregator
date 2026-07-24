@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: 'Max ads to parse (0 = all pending, default: 500)'
+        description: 'Max ads to parse (0 = all pending, default: 3000)'
         required: false
-        default: '500'
+        default: '3000'
       source:
         description: 'Filter by source (leave blank for both)'
         required: false
@@ -17,7 +17,8 @@ on:
           - pazar3
           - reklama5
   schedule:
-    - cron: '0 19 * * *'  # daily at 19:00 UTC = 21:00 Macedonia time (UTC+2)
+    - cron: '0 7 * * *'   # 09:00 Macedonia time (UTC+2) — morning run
+    - cron: '0 19 * * *'  # 21:00 Macedonia time (UTC+2) — evening run
 
 jobs:
   parse:
@@ -50,7 +51,7 @@ jobs:
 
       - name: Run LLM parser
         run: |
-          LIMIT="${{ github.event.inputs.limit || '500' }}"
+          LIMIT="${{ github.event.inputs.limit || '3000' }}"
           SOURCE="${{ github.event.inputs.source || '' }}"
 
           ARGS=""
