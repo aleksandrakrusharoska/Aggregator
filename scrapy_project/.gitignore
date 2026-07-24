@@ -1,0 +1,7 @@
+.env
+*.jl
+*.db
+.scrapy-jobdirs/
+__pycache__/
+*.pyc
+.scrapy/

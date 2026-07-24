@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     dedup_similarity_threshold: float = 0.92
     price_anomaly_zscore: float = 2.5
 
+    # Supabase
+    supabase_url: str = ""
+    supabase_key: str = ""
+
     # LLM (опционално)
     anthropic_api_key: str = ""
 

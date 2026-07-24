@@ -7,17 +7,16 @@ class Pazar3Spider(scrapy.Spider):
     allowed_domains = ['pazar3.mk']
     start_urls = ['https://www.pazar3.mk/oglasi/elektronika/prodazba-kupuvanje-zamena']
     custom_settings = {
-        'DOWNLOAD_DELAY': 20,
+        'DOWNLOAD_DELAY': 3,
         'CONCURRENT_REQUESTS': 1,
     }
 
     def __init__(self, start_url=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if start_url:
-            self.start_urls = [start_url]
+            self.start_urls = [u.strip() for u in start_url.split('|') if u.strip()]
 
     def parse(self, response):
-        # Parse listing blocks present in server-rendered HTML
         from urllib.parse import urlparse, parse_qs
 
         listings = response.css('div.row-listing, div.row.row-listing')
@@ -28,7 +27,6 @@ class Pazar3Spider(scrapy.Spider):
             img = l.css('img::attr(data-src)').get() or l.css('img::attr(src)').get()
             price = l.css('p.list-price::text').get()
             posted = l.css('span.pull-right::text').get()
-            # location/category breadcrumbs appear as a series of links; take the last non-empty one
             crumbs = l.css('a.link-html.nobold::text').getall()
             location = crumbs[-1].strip() if crumbs else None
 
@@ -40,12 +38,19 @@ class Pazar3Spider(scrapy.Spider):
             item['location'] = location
             item['source'] = 'pazar3'
 
-            yield item
+            if href:
+                yield response.follow(
+                    href,
+                    callback=self.parse_ad,
+                    meta={'listing': dict(item)},
+                )
+            else:
+                yield item
 
-        # Pagination: follow explicit "next" page button when enabled
         next_btn = response.css('a.next.page-number:not(.disabled)::attr(href)').get()
         if not next_btn:
             parsed = urlparse(response.url)
+            from urllib.parse import parse_qs
             params = parse_qs(parsed.query)
             current = int(params.get('Page', ['1'])[0])
             next_btn = response.css(f'a.page-number[page-no="{current+1}"]::attr(href)').get()
@@ -53,24 +58,71 @@ class Pazar3Spider(scrapy.Spider):
             yield response.follow(next_btn, callback=self.parse)
 
     def parse_ad(self, response):
+        listing = response.meta.get('listing') or {}
         item = AdItem()
+        for k, v in listing.items():
+            item[k] = v
+
         item['ad_url'] = response.url
         item['source'] = 'pazar3'
-        item['title'] = response.css('h1::text').get()
-        item['price'] = response.css('.price::text').get()
-        item['currency'] = response.css('.price .currency::text').get()
-        item['location'] = response.css('.location::text').get()
-        item['description'] = ' '.join(response.css('.description p::text').getall() or []).strip()
-        item['seller_name'] = response.css('.seller-name::text').get()
-        item['phone'] = response.css('.phone::text').get()
-        item['images'] = response.css('.gallery img::attr(src)').getall()
-        item['posted_date'] = response.css('.posted::text').get()
 
-        specs = {}
-        for row in response.css('.specs tr'):
-            k = row.css('th::text').get()
-            v = row.css('td::text').get()
-            if k and v:
-                specs[k.strip().lower()] = v.strip()
-        item['specs'] = specs
+        title = response.css('h1.ci-text-base::text').get()
+        if title:
+            item['title'] = title.strip()
+
+        # Description is in the <meta name="description"> tag (server-rendered, reliable)
+        desc = response.css('meta[name="description"]::attr(content)').get()
+        if desc:
+            item['description'] = desc.strip()
+
+        # Price value attribute on the bdi element
+        price_val = response.css('bdi.format-money-int::attr(value)').get()
+        if price_val:
+            item['price'] = price_val.strip() + ' МКД'
+
+        # Published date
+        pub_date = response.css('bdi.published-date::text').get()
+        pub_time = response.css('bdi.published-time::text').get()
+        if pub_date:
+            item['posted_date'] = (pub_date.strip() + ' ' + pub_time.strip()).strip() if pub_time else pub_date.strip()
+
+        # Gallery images (main photo slider only, not related-ads thumbnails)
+        images = [
+            src.strip() for src in
+            response.css('img.custom-photo-zoom::attr(data-src)').getall()
+            if src.strip()
+        ]
+        if images:
+            item['images'] = images
+
+        # Seller name
+        seller = response.css('div.user-name.ci-text-base::text').get()
+        if seller:
+            item['seller_name'] = seller.strip()
+
+        # Structured tag-items: Condition, category, seller type, etc.
+        tag_map = {}
+        for tag in response.css('a.tag-item'):
+            label = tag.css('span::text').get('').strip().rstrip(':').strip()
+            value = tag.css('bdi::text').get('').strip()
+            if label and value:
+                tag_map[label] = value
+
+        if not item.get('location'):
+            item['location'] = tag_map.get('Локација')
+
+        condition = tag_map.get('Condition') or tag_map.get('Состојба')
+        if condition:
+            item['condition'] = condition
+
+        category = tag_map.get('Производи')
+        if category:
+            item['category'] = category
+
+        advertiser = tag_map.get('Огласено од', '')
+        if 'Физичко' in advertiser:
+            item['seller_type'] = 'private'
+        elif 'Правно' in advertiser or 'Компанија' in advertiser:
+            item['seller_type'] = 'business'
+
         yield item

@@ -1,9 +1,21 @@
 __pycache__/
 *.pyc
 .venv/
+venv/
 .idea/
+
+# Credentials — never commit these
+.env
+*.env
 
 # Scraper runtime outputs
 scrapy_project/scraped_ads.db
 scrapy_project/*_items.jl
 scrapy_project/.scrapy-jobdirs/
+
+# Frontend build output and dependencies
+frontend/node_modules/
+frontend/dist/
+
+# Internal memory files
+scrapy_project/memory/

@@ -14,7 +14,7 @@ import json
 import logging
 import sqlite3
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -27,7 +27,10 @@ JLS = {
 }
 DB_PATH = HERE / 'scraped_ads.db'
 DEFAULT_PAZAR3_URL = 'https://www.pazar3.mk/oglasi/elektronika/prodazba-kupuvanje-zamena'
-DEFAULT_REKLAMA5_URL = 'https://reklama5.mk/Search?city=&cat=580&q=&sell=0&sell=1&buy=0&buy=1&trade=0&trade=1&includeOld=0&includeOld=1&includeNew=0&includeNew=1&cargoReady=0&DDVIncluded=0&private=0&company=0&page=1&SortByPrice=0&zz=1&pageView='
+DEFAULT_REKLAMA5_URLS = [
+    'https://reklama5.mk/Search?city=&cat=580&q=&sell=0&sell=1&buy=0&buy=1&trade=0&trade=1&includeOld=0&includeOld=1&includeNew=0&includeNew=1&cargoReady=0&DDVIncluded=0&private=0&company=0&page=1&SortByPrice=0&zz=1&pageView=',
+    'https://reklama5.mk/Search?city=&cat=558&q=&sell=0&sell=1&buy=0&buy=1&trade=0&trade=1&includeOld=0&includeOld=1&includeNew=0&includeNew=1&cargoReady=0&DDVIncluded=0&private=0&company=0&page=1&SortByPrice=0&zz=1&pageView=',
+]
 JOBDIR_ROOT = HERE / '.scrapy-jobdirs'
 
 CREATE_SQL = '''
@@ -36,15 +39,19 @@ CREATE TABLE IF NOT EXISTS ads (
     title TEXT,
     price TEXT,
     currency TEXT,
+    price_amount TEXT,
+    price_eur REAL,
+    price_mkd REAL,
+    price_note TEXT,
     location TEXT,
     description TEXT,
     seller_name TEXT,
     phone TEXT,
-    images TEXT, -- JSON array
+    images TEXT,
     posted_date TEXT,
     category TEXT,
     condition TEXT,
-    specs TEXT, -- JSON object
+    specs TEXT,
     source TEXT,
     scraped_at TEXT
 );
@@ -103,23 +110,34 @@ def upsert_items(conn, items, source):
         ad_url = it.get('ad_url') or it.get('url')
         if not ad_url:
             continue
-        title = it.get('title')
-        price = it.get('price')
-        currency = it.get('currency')
-        location = it.get('location')
-        description = it.get('description')
-        seller_name = it.get('seller_name')
-        phone = it.get('phone')
-        images = json.dumps(it.get('images') or [])
-        posted_date = it.get('posted_date')
-        category = it.get('category')
-        condition = it.get('condition')
-        specs = json.dumps(it.get('specs') or {})
-        scraped_at = datetime.utcnow().isoformat()
         try:
             cur.execute(
-                'INSERT OR IGNORE INTO ads (ad_url,title,price,currency,location,description,seller_name,phone,images,posted_date,category,condition,specs,source,scraped_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                (ad_url, title, price, currency, location, description, seller_name, phone, images, posted_date, category, condition, specs, source, scraped_at),
+                '''INSERT OR IGNORE INTO ads
+                   (ad_url,title,price,currency,price_amount,price_eur,price_mkd,price_note,
+                    location,description,seller_name,phone,images,posted_date,
+                    category,condition,specs,source,scraped_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (
+                    ad_url,
+                    it.get('title'),
+                    it.get('price'),
+                    it.get('currency'),
+                    it.get('price_amount'),
+                    it.get('price_eur'),
+                    it.get('price_mkd'),
+                    it.get('price_note'),
+                    it.get('location'),
+                    it.get('description'),
+                    it.get('seller_name'),
+                    it.get('phone'),
+                    json.dumps(it.get('images') or []),
+                    it.get('posted_date'),
+                    it.get('category'),
+                    it.get('condition'),
+                    json.dumps(it.get('specs') or {}),
+                    source,
+                    it.get('scraped_at') or datetime.now(timezone.utc).isoformat(),
+                ),
             )
             if cur.rowcount == 1:
                 inserted += 1
@@ -170,7 +188,7 @@ def main():
     parser.add_argument('--reklama5-pages', type=int, default=3,
                         help='Pages to crawl for reklama5 in incremental mode')
     parser.add_argument('--pazar3-url', default=DEFAULT_PAZAR3_URL, help='Pazar3 start URL')
-    parser.add_argument('--reklama5-url', default=DEFAULT_REKLAMA5_URL, help='Reklama5 start URL')
+
     parser.add_argument('--chunked-full', action='store_true',
                         help='Run full mode in chunks for better reliability')
     parser.add_argument('--chunk-size', type=int, default=100,
@@ -213,22 +231,13 @@ def main():
 
     if run_reklama:
         if args.mode == 'incremental':
-            run_spider('reklama5', start_url=args.reklama5_url, page_limit=args.reklama5_pages, jobdir=(JOBDIR_ROOT / 'reklama5_incremental' if args.jobdir else None))
+            run_spider('reklama5', page_limit=args.reklama5_pages, jobdir=(JOBDIR_ROOT / 'reklama5_incremental' if args.jobdir else None))
             total_new += ingest_source(conn, 'reklama5')
         elif args.chunked_full:
-            total_new += run_full_in_chunks(
-                conn=conn,
-                spider='reklama5',
-                source_name='reklama5',
-                base_url=args.reklama5_url,
-                page_param='page',
-                start_page=args.start_page,
-                end_page=end_page,
-                chunk_size=args.chunk_size,
-                use_jobdir=args.jobdir,
-            )
+            run_spider('reklama5', jobdir=(JOBDIR_ROOT / 'reklama5_full' if args.jobdir else None))
+            total_new += ingest_source(conn, 'reklama5')
         else:
-            run_spider('reklama5', start_url=args.reklama5_url, jobdir=(JOBDIR_ROOT / 'reklama5_full' if args.jobdir else None))
+            run_spider('reklama5', jobdir=(JOBDIR_ROOT / 'reklama5_full' if args.jobdir else None))
             total_new += ingest_source(conn, 'reklama5')
 
     conn.close()
