@@ -64,15 +64,20 @@ class IncrementalCheckPipeline:
         key = spider.crawler.settings.get('SUPABASE_KEY')
         if not url or not key:
             return
+        from datetime import datetime, timezone, timedelta
         from supabase import create_client
         client = create_client(url, key)
-        logger.info('IncrementalCheckPipeline: loading known URLs for %s...', spider.name)
+        # Only load URLs scraped in the last 30 days — enough for incremental
+        # check without fetching the entire table (which causes statement timeout).
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        logger.info('IncrementalCheckPipeline: loading recent URLs for %s (since %s)...', spider.name, cutoff[:10])
         offset, batch = 0, 1000
         while True:
             rows = (
                 client.table('ads')
                 .select('ad_url')
                 .eq('source', spider.name)
+                .gte('scraped_at', cutoff)
                 .range(offset, offset + batch - 1)
                 .execute()
                 .data
@@ -84,7 +89,7 @@ class IncrementalCheckPipeline:
             if len(rows) < batch:
                 break
             offset += batch
-        logger.info('IncrementalCheckPipeline: %d known URLs loaded.', len(self._known))
+        logger.info('IncrementalCheckPipeline: %d recent URLs loaded.', len(self._known))
 
     def process_item(self, item, spider):
         if not spider.crawler.settings.getbool('INCREMENTAL', False):
