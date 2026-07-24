@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import AdCard from './AdCard'
+import { formatDate } from '../utils/formatDate'
 
 const CONDITION_LABELS = {
   'new':       'Нов',
@@ -113,7 +114,7 @@ function AdRow({ ad, onClick }) {
         )}
         {(ad.posted_date || ad.scraped_at) && (
           <div className="text-[11px] text-slate-400 dark:text-slate-600 font-mono mt-0.5">
-            {new Date(ad.posted_date || ad.scraped_at).toLocaleDateString('mk-MK')}
+            {formatDate(ad.posted_date || ad.scraped_at)}
           </div>
         )}
       </div>

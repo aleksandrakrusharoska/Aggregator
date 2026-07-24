@@ -1,3 +1,5 @@
+import { formatDate } from '../utils/formatDate'
+
 const SOURCE_COLORS = {
   reklama5: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
   pazar3:   'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300',
@@ -136,7 +138,7 @@ export default function AdCard({ ad, onClick, isSaved, onWishlistToggle }) {
         {/* Date */}
         {(ad.posted_date || ad.scraped_at) && (
           <p className="text-[11px] text-slate-400 dark:text-slate-600 font-mono">
-            {new Date(ad.posted_date || ad.scraped_at).toLocaleDateString('mk-MK')}
+            {formatDate(ad.posted_date || ad.scraped_at)}
           </p>
         )}
       </div>

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { fetchSimilar } from '../api/client'
+import { formatDate } from '../utils/formatDate'
 
 const SOURCE_LABELS = { reklama5: 'Reklama5', pazar3: 'Pazar3' }
 const CONDITION_MK = {
@@ -7,8 +9,12 @@ const CONDITION_MK = {
 const SELLER_TYPE_MK = { private: 'Физичко лице', business: 'Правно лице' }
 
 export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
+  const [currentAd, setCurrentAd] = useState(ad)
   const [imgIdx, setImgIdx] = useState(0)
-  const images = Array.isArray(ad.images) ? ad.images : (ad.image_url ? [ad.image_url] : [])
+  const [similar, setSimilar] = useState([])
+  const images = Array.isArray(currentAd.images) ? currentAd.images : (currentAd.image_url ? [currentAd.image_url] : [])
+
+  useEffect(() => { setCurrentAd(ad); setImgIdx(0) }, [ad.ad_url])
 
   const prev = () => setImgIdx(i => (i - 1 + images.length) % images.length)
   const next = () => setImgIdx(i => (i + 1) % images.length)
@@ -27,17 +33,22 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
     }
   }, [onClose, images.length])
 
+  useEffect(() => {
+    if (!currentAd.cluster_id) { setSimilar([]); return }
+    fetchSimilar(currentAd.cluster_id, currentAd.ad_url).then(setSimilar).catch(() => setSimilar([]))
+  }, [currentAd.ad_url, currentAd.cluster_id])
+
   const daysSinceScraped = (() => {
-    const ref = ad.scraped_at || ad.posted_date
+    const ref = currentAd.scraped_at || currentAd.posted_date
     if (!ref) return null
     return Math.floor((Date.now() - new Date(ref).getTime()) / 86_400_000)
   })()
 
-  const specs = ad.specs && typeof ad.specs === 'object' ? ad.specs : {}
+  const specs = currentAd.specs && typeof currentAd.specs === 'object' ? currentAd.specs : {}
   const hasSpecs = Object.keys(specs).length > 0
 
-  const isCheapAnomaly = ad.is_anomaly && ad.price_zscore < 0
-  const isExpensiveAnomaly = ad.is_anomaly && ad.price_zscore > 0
+  const isCheapAnomaly = currentAd.is_anomaly && currentAd.price_zscore <= 0
+  const isExpensiveAnomaly = currentAd.is_anomaly && currentAd.price_zscore > 0
 
   return (
     <div
@@ -55,34 +66,34 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300">
-                {SOURCE_LABELS[ad.source] || ad.source}
+                {SOURCE_LABELS[currentAd.source] || currentAd.source}
               </span>
-              {ad.condition && (
+              {currentAd.condition && (
                 <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                  {CONDITION_MK[ad.condition] || ad.condition}
+                  {CONDITION_MK[currentAd.condition] || currentAd.condition}
                 </span>
               )}
-              {ad.delivery_available && (
+              {currentAd.delivery_available && (
                 <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-300">
                   Достава
                 </span>
               )}
             </div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 leading-snug">
-              {ad.title}
+              {currentAd.title}
             </h2>
           </div>
           {onWishlistToggle && (
             <button
-              onClick={() => onWishlistToggle(ad)}
+              onClick={() => onWishlistToggle(currentAd)}
               className={`shrink-0 rounded-lg p-2 transition-colors ${
-                isSaved
+                isSaved(currentAd.ad_url)
                   ? 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'
                   : 'text-slate-400 hover:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
-              aria-label={isSaved ? 'Отстрани од листа на желби' : 'Зачувај'}
+              aria-label={isSaved(currentAd.ad_url) ? 'Отстрани од листа на желби' : 'Зачувај'}
             >
-              <svg className="w-5 h-5" fill={isSaved ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5" fill={isSaved(currentAd.ad_url) ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
               </svg>
             </button>
@@ -100,25 +111,35 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
 
         {/* Anomaly banners */}
         {isCheapAnomaly && (
-          <div className="shrink-0 flex items-center gap-3 px-5 py-2.5 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-100 dark:border-emerald-900/30">
-            <svg className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.214.33-.403.713-.57 1.116-.334.804-.614 1.768-.84 2.734a31.365 31.365 0 00-.613 3.58 2.64 2.64 0 01-.945-1.067c-.328-.68-.398-1.534-.398-2.654A1 1 0 005.05 6.05 6.981 6.981 0 003 11a7 7 0 1011.95-4.95c-.592-.591-.98-.985-1.348-1.467-.363-.476-.724-1.063-1.207-2.03zM12.12 15.12A3 3 0 017 13s.879.5 2.5.5c0-1 .5-4 1.25-4.5.5 1 .786 1.293 1.371 1.879A2.99 2.99 0 0113 13a2.99 2.99 0 01-.879 2.121z" clipRule="evenodd" />
-            </svg>
-            <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Детектирана добра цена</span>
-            <span className="text-xs text-emerald-600/70 dark:text-emerald-400/70">
-              {Math.abs(ad.price_zscore).toFixed(1)}σ под просекот за сличен производ
-            </span>
+          <div className="shrink-0 px-5 py-2.5 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-100 dark:border-emerald-900/30">
+            <div className="flex items-center gap-3">
+              <svg className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.214.33-.403.713-.57 1.116-.334.804-.614 1.768-.84 2.734a31.365 31.365 0 00-.613 3.58 2.64 2.64 0 01-.945-1.067c-.328-.68-.398-1.534-.398-2.654A1 1 0 005.05 6.05 6.981 6.981 0 003 11a7 7 0 1011.95-4.95c-.592-.591-.98-.985-1.348-1.467-.363-.476-.724-1.063-1.207-2.03zM12.12 15.12A3 3 0 017 13s.879.5 2.5.5c0-1 .5-4 1.25-4.5.5 1 .786 1.293 1.371 1.879A2.99 2.99 0 0113 13a2.99 2.99 0 01-.879 2.121z" clipRule="evenodd" />
+              </svg>
+              <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Детектирана добра цена</span>
+              <span className="text-xs text-emerald-600/70 dark:text-emerald-400/70">
+                {Math.abs(currentAd.price_zscore).toFixed(1)}σ под просекот за сличен производ
+              </span>
+            </div>
+            {currentAd.anomaly_reason && (
+              <p className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-300/70 pl-7 italic">{currentAd.anomaly_reason}</p>
+            )}
           </div>
         )}
         {isExpensiveAnomaly && (
-          <div className="shrink-0 flex items-center gap-3 px-5 py-2.5 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-100 dark:border-amber-900/30">
-            <svg className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <span className="text-sm font-medium text-amber-700 dark:text-amber-300">Висока цена</span>
-            <span className="text-xs text-amber-600/70 dark:text-amber-400/70">
-              {Math.abs(ad.price_zscore).toFixed(1)}σ над просекот за сличен производ
-            </span>
+          <div className="shrink-0 px-5 py-2.5 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-100 dark:border-amber-900/30">
+            <div className="flex items-center gap-3">
+              <svg className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span className="text-sm font-medium text-amber-700 dark:text-amber-300">Висока цена</span>
+              <span className="text-xs text-amber-600/70 dark:text-amber-400/70">
+                {Math.abs(currentAd.price_zscore).toFixed(1)}σ над просекот за сличен производ
+              </span>
+            </div>
+            {currentAd.anomaly_reason && (
+              <p className="mt-1 text-xs text-amber-700/80 dark:text-amber-300/70 pl-7 italic">{currentAd.anomaly_reason}</p>
+            )}
           </div>
         )}
 
@@ -134,7 +155,7 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
                   <div className="aspect-[4/3] bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group/img">
                     <img
                       src={images[imgIdx]}
-                      alt={ad.title}
+                      alt={currentAd.title}
                       className="w-full h-full object-contain"
                       onError={e => { e.target.style.display = 'none' }}
                     />
@@ -196,44 +217,44 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
 
               {/* Price */}
               <div className="flex items-baseline gap-2 flex-wrap">
-                {ad.price_eur ? (
+                {currentAd.price_eur ? (
                   <span className="text-2xl font-bold text-violet-600 dark:text-violet-400 font-mono">
-                    {Number(ad.price_eur).toLocaleString('mk-MK')} €
+                    {Number(currentAd.price_eur).toLocaleString('mk-MK')} €
                   </span>
                 ) : (
                   <span className="text-lg text-slate-400 dark:text-slate-500">По договор</span>
                 )}
-                {ad.price_mkd && (
+                {currentAd.price_mkd && (
                   <span className="text-sm text-slate-400 dark:text-slate-500 font-mono">
-                    ≈ {Number(ad.price_mkd).toLocaleString('mk-MK')} МКД
+                    ≈ {Number(currentAd.price_mkd).toLocaleString('mk-MK')} МКД
                   </span>
                 )}
               </div>
 
               {/* Meta */}
               <dl className="space-y-1.5 text-sm">
-                {ad.location && (
+                {currentAd.location && (
                   <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
                     <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                     </svg>
-                    {ad.location}
+                    {currentAd.location}
                   </div>
                 )}
-                {ad.seller_name && (
+                {currentAd.seller_name && (
                   <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
                     <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                     </svg>
-                    <span>{ad.seller_name}</span>
-                    {ad.seller_type && (
+                    <span>{currentAd.seller_name}</span>
+                    {currentAd.seller_type && (
                       <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                        ({SELLER_TYPE_MK[ad.seller_type] || ad.seller_type})
+                        ({SELLER_TYPE_MK[currentAd.seller_type] || currentAd.seller_type})
                       </span>
                     )}
                   </div>
                 )}
-                {ad.delivery_available && (
+                {currentAd.delivery_available && (
                   <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
                     <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
@@ -241,20 +262,20 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
                     Достава можна
                   </div>
                 )}
-                {(ad.posted_date || ad.scraped_at) && (
-                  <div className="text-slate-400 dark:text-slate-500 font-mono text-xs">
-                    Огласено: {new Date(ad.posted_date || ad.scraped_at).toLocaleDateString('mk-MK')}
+                {(currentAd.posted_date || currentAd.scraped_at) && (
+                  <div className="text-slate-400 dark:text-slate-500 text-xs">
+                    Огласено: {formatDate(currentAd.posted_date || currentAd.scraped_at)}
                   </div>
                 )}
               </dl>
 
               {/* Cluster tag */}
-              {ad.cluster_label && (
+              {currentAd.cluster_label && (
                 <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/60 rounded-lg px-3 py-2 border border-slate-100 dark:border-slate-800">
                   <svg className="w-3.5 h-3.5 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
                   </svg>
-                  <span className="font-mono truncate">{ad.cluster_label}</span>
+                  <span className="font-mono truncate">{currentAd.cluster_label}</span>
                 </div>
               )}
 
@@ -269,9 +290,9 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
               )}
 
               {/* Link */}
-              {ad.ad_url && (
+              {currentAd.ad_url && (
                 <a
-                  href={ad.ad_url}
+                  href={currentAd.ad_url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium transition-colors"
@@ -305,36 +326,76 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
               )}
 
               {/* Description */}
-              {ad.description && (
+              {currentAd.description && (
                 <div>
                   <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">
                     Опис
                   </h4>
                   <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-line line-clamp-[12]">
-                    {ad.description}
+                    {currentAd.description}
                   </p>
                 </div>
               )}
 
               {/* Seller notes */}
-              {ad.seller_notes && (
+              {currentAd.seller_notes && (
                 <div>
                   <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">
                     Белешки
                   </h4>
                   <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed italic">
-                    {ad.seller_notes}
+                    {currentAd.seller_notes}
                   </p>
                 </div>
               )}
 
-              {!hasSpecs && !ad.description && !ad.seller_notes && (
+              {!hasSpecs && !currentAd.description && !currentAd.seller_notes && (
                 <p className="text-sm text-slate-400 dark:text-slate-600 italic">
                   Нема дополнителни информации
                 </p>
               )}
             </div>
           </div>
+
+          {/* Similar products */}
+          {similar.length > 0 && (
+            <div className="border-t border-slate-100 dark:border-slate-800 px-5 py-4">
+              <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">
+                Слични производи
+              </h4>
+              <div className="flex gap-3 overflow-x-auto pb-1">
+                {similar.map(s => {
+                  const thumb = Array.isArray(s.images) ? s.images[0] : null
+                  return (
+                    <button
+                      key={s.ad_url}
+                      onClick={() => { setCurrentAd(s); setImgIdx(0) }}
+                      className="shrink-0 w-36 text-left rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 hover:border-violet-300 dark:hover:border-violet-700 hover:shadow-sm transition-all overflow-hidden"
+                    >
+                      <div className="w-full h-24 bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                        {thumb
+                          ? <img src={thumb} alt={s.title} className="w-full h-full object-contain" onError={e => { e.target.style.display = 'none' }} />
+                          : <div className="w-full h-full flex items-center justify-center">
+                              <svg className="w-8 h-8 text-slate-300 dark:text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                            </div>
+                        }
+                      </div>
+                      <div className="p-2">
+                        <p className="text-xs text-slate-700 dark:text-slate-300 line-clamp-2 leading-tight mb-1">{s.title}</p>
+                        {s.price_eur && (
+                          <p className="text-xs font-semibold text-violet-600 dark:text-violet-400 font-mono">
+                            {Number(s.price_eur).toLocaleString('mk-MK')} €
+                          </p>
+                        )}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

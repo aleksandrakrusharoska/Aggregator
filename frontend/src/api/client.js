@@ -30,3 +30,11 @@ export async function fetchCategories() {
   if (!res.ok) throw new Error('Грешка при вчитување категории')
   return res.json()
 }
+
+export async function fetchSimilar(clusterId, excludeUrl) {
+  const params = new URLSearchParams({ cluster_id: clusterId, limit: 6 })
+  if (excludeUrl) params.set('exclude_url', excludeUrl)
+  const res = await fetch(`${BASE}/similar?${params}`)
+  if (!res.ok) return []
+  return res.json()
+}

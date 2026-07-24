@@ -1,0 +1,42 @@
+name: Backfill Pazar3 (oldest first)
+
+on:
+  workflow_dispatch:  # trigger manually from GitHub Actions tab
+  schedule:
+    - cron: '0 13 * * *'  # daily at 13:00 UTC = 15:00 Macedonia time (UTC+2)
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6-hour cap; spider stops on its own when it hits known ads
+
+    defaults:
+      run:
+        working-directory: scrapy_project
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: scrapy_project/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create .env file
+        run: |
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
+          echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
+
+      - name: Crawl pazar3 oldest-first
+        run: |
+          scrapy crawl pazar3_oldest \
+            -s INCREMENTAL=1 \
+            -s DOWNLOAD_DELAY=2 \
+            -s CONCURRENT_REQUESTS=1 \
+            -s LOG_LEVEL=INFO

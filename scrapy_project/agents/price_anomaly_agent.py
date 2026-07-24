@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 Z_THRESHOLD = 2.0       # flag if price deviates > 2 std from group mean
 MIN_GROUP_SIZE = 3      # need at least 3 ads to compute meaningful stats
+SUSPICIOUS_PRICE_EUR = 3.0  # any electronics ad under €3 is almost certainly a data entry error
 
 _NOISE = [
     'se prodava', 'prodavam', 'itno', 'hitno', 'kako nov', 'kako nova',
@@ -49,6 +50,15 @@ def detect_anomalies(ads: list[dict]) -> list[dict]:
     # Filter to ads with valid prices
     priced = [a for a in ads if a.get('price_eur') and float(a['price_eur']) > 0]
     logger.info('Ads with price: %d / %d', len(priced), len(ads))
+
+    # Absolute floor: flag obviously wrong prices before grouping
+    suspicious = {
+        a['ad_url']
+        for a in priced
+        if float(a['price_eur']) < SUSPICIOUS_PRICE_EUR
+    }
+    if suspicious:
+        logger.info('Suspicious prices (under €%.0f): %d ads', SUSPICIOUS_PRICE_EUR, len(suspicious))
 
     # Group by normalised title
     groups: dict[str, list[dict]] = {}
@@ -84,7 +94,7 @@ def detect_anomalies(ads: list[dict]) -> list[dict]:
             else:
                 zscore = float((price - mean) / std)
 
-            is_anomaly = abs(zscore) > Z_THRESHOLD
+            is_anomaly = abs(zscore) > Z_THRESHOLD or ad['ad_url'] in suspicious
             if is_anomaly:
                 anomaly_count += 1
                 logger.debug(

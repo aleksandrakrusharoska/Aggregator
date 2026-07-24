@@ -10,7 +10,7 @@ AD_FIELDS = (
     "ad_url, title, price_eur, price_mkd, currency, location, "
     "images, category, condition, source, scraped_at, posted_date, "
     "seller_name, seller_type, specs, delivery_available, description, seller_notes, "
-    "is_anomaly, price_zscore, cluster_label, ad_type"
+    "is_anomaly, price_zscore, anomaly_reason, cluster_id, cluster_label, ad_type"
 )
 
 
@@ -84,6 +84,22 @@ def get_stats():
         "anomalies": anomalies,
         "ad_types": {"service": services, "wanted": wanted},
     }
+
+
+@router.get("/similar")
+def get_similar(cluster_id: int, exclude_url: str | None = None, limit: int = 6):
+    sb = get_supabase()
+    q = (
+        sb.table("ads")
+        .select(AD_FIELDS)
+        .eq("cluster_id", cluster_id)
+        .eq("ad_type", "product")
+        .not_.is_("images", "null")
+    )
+    if exclude_url:
+        q = q.neq("ad_url", exclude_url)
+    result = q.order("scraped_at", desc=True).limit(limit).execute()
+    return result.data
 
 
 @router.get("/categories")

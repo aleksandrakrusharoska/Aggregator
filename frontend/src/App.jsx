@@ -127,7 +127,7 @@ export default function App() {
         <AdModal
           ad={selectedAd}
           onClose={() => setSelectedAd(null)}
-          isSaved={isSaved(selectedAd.ad_url)}
+          isSaved={isSaved}
           onWishlistToggle={toggleWishlist}
         />
       )}
