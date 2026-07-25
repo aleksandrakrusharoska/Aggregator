@@ -36,7 +36,6 @@ jobs:
       - name: Crawl pazar3 oldest-first
         run: |
           scrapy crawl pazar3_oldest \
-            -s INCREMENTAL=1 \
             -s DOWNLOAD_DELAY=2 \
             -s CONCURRENT_REQUESTS=1 \
             -s LOG_LEVEL=INFO
