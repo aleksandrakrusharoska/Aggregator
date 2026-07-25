@@ -1,20 +1,18 @@
 """
 LLM-based parser for unstructured electronics ad descriptions.
-Uses Groq (llama-3.1-8b-instant) via LangChain to extract structured data.
+Rotates between Groq (llama-3.1-8b-instant) and Gemini (gemini-2.0-flash)
+on each request to share the load across both free-tier daily token limits.
 """
 import json
 import logging
 import os
 import re
+from itertools import cycle
 from typing import Dict, Optional
 
-from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
-
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
 _SYSTEM = """You extract structured information from second-hand electronics ads.
 Ads may be written in Macedonian, Albanian, Serbian, or English.
@@ -43,28 +41,66 @@ class ParsedAdContent(BaseModel):
     seller_type: Optional[str] = None
 
 
-def build_parser():
-    return ChatGroq(
-        model=GROQ_MODEL,
-        api_key=GROQ_API_KEY,
-        temperature=0,
-    )
+def _build_clients():
+    """Build all available LLM clients. Returns a list of (name, client) tuples."""
+    clients = []
+
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        from langchain_groq import ChatGroq
+        clients.append(("groq", ChatGroq(
+            model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+            api_key=groq_key,
+            temperature=0,
+        )))
+
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        clients.append(("gemini", ChatGoogleGenerativeAI(
+            model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+            google_api_key=gemini_key,
+            temperature=0,
+        )))
+
+    if not clients:
+        raise RuntimeError("No LLM API keys found. Set GROQ_API_KEY and/or GEMINI_API_KEY.")
+
+    logger.info("Parser using %d provider(s): %s", len(clients), [n for n, _ in clients])
+    return clients
 
 
-def parse_ad(title: str, description: str, parser=None) -> ParsedAdContent:
+class RotatingParser:
+    """Alternates requests between all available LLM providers."""
+
+    def __init__(self):
+        self._clients = _build_clients()
+        self._cycle = cycle(self._clients)
+
+    def next(self):
+        return next(self._cycle)
+
+
+def build_parser() -> RotatingParser:
+    return RotatingParser()
+
+
+def parse_ad(title: str, description: str, parser: RotatingParser = None) -> ParsedAdContent:
     if parser is None:
         parser = build_parser()
+
+    name, client = parser.next()
     try:
         prompt = f"Title: {(title or '').strip()}\n\nDescription:\n{(description or '').strip()}"
-        response = parser.invoke([
+        response = client.invoke([
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": prompt},
         ])
         raw = response.content.strip()
-        # Strip markdown code blocks if model wraps output
         raw = re.sub(r'^```(?:json)?\s*', '', raw)
         raw = re.sub(r'\s*```$', '', raw)
         data = json.loads(raw)
+        logger.debug("Parsed via %s: %s", name, title[:50])
         return ParsedAdContent(
             specs={k: str(v) for k, v in (data.get("specs") or {}).items() if v and str(v).strip()},
             condition=data.get("condition") or None,
@@ -74,5 +110,5 @@ def parse_ad(title: str, description: str, parser=None) -> ParsedAdContent:
             seller_type=data.get("seller_type") or None,
         )
     except Exception as exc:
-        logger.warning("LLM parse failed for title=%r: %s", title, exc)
+        logger.warning("LLM parse failed (%s) for title=%r: %s", name, title, exc)
         return ParsedAdContent()
