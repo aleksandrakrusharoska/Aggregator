@@ -19,7 +19,7 @@ from sklearn.preprocessing import Normalizer
 
 logger = logging.getLogger(__name__)
 
-N_CLUSTERS = 400          # number of product groups
+N_CLUSTERS = 150          # number of product groups
 SVD_COMPONENTS = 100      # latent dimensions after SVD
 TOP_TERMS = 4             # words used to label each cluster
 MIN_TITLE_LEN = 3         # skip very short titles

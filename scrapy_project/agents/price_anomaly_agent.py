@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 Z_THRESHOLD = 2.0       # flag if price deviates > 2 std from group mean
 MIN_GROUP_SIZE = 3      # need at least 3 ads to compute meaningful stats
-SUSPICIOUS_PRICE_EUR = 3.0  # any electronics ad under €3 is almost certainly a data entry error
+SUSPICIOUS_PRICE_EUR = 3.0  # prices under €3 are typically placeholder "contact for price" listings
 
 _NOISE = [
     'se prodava', 'prodavam', 'itno', 'hitno', 'kako nov', 'kako nova',
