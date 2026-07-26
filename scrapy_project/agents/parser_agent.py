@@ -76,9 +76,19 @@ class RotatingParser:
     def __init__(self):
         self._clients = _build_clients()
         self._cycle = cycle(self._clients)
+        self._exhausted: set = set()
 
     def next(self):
-        return next(self._cycle)
+        for _ in range(len(self._clients)):
+            name, client = next(self._cycle)
+            if name not in self._exhausted:
+                return name, client
+        raise RuntimeError("All LLM providers exhausted for this run.")
+
+    def mark_exhausted(self, name: str):
+        self._exhausted.add(name)
+        remaining = [n for n, _ in self._clients if n not in self._exhausted]
+        logger.warning("Provider '%s' hit daily limit — removed from rotation. Remaining: %s", name, remaining)
 
 
 def build_parser() -> RotatingParser:
@@ -89,26 +99,35 @@ def parse_ad(title: str, description: str, parser: RotatingParser = None) -> Par
     if parser is None:
         parser = build_parser()
 
-    name, client = parser.next()
-    try:
-        prompt = f"Title: {(title or '').strip()}\n\nDescription:\n{(description or '').strip()}"
-        response = client.invoke([
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": prompt},
-        ])
-        raw = response.content.strip()
-        raw = re.sub(r'^```(?:json)?\s*', '', raw)
-        raw = re.sub(r'\s*```$', '', raw)
-        data = json.loads(raw)
-        logger.debug("Parsed via %s: %s", name, title[:50])
-        return ParsedAdContent(
-            specs={k: str(v) for k, v in (data.get("specs") or {}).items() if v and str(v).strip()},
-            condition=data.get("condition") or None,
-            seller_notes=data.get("seller_notes") or None,
-            phone=data.get("phone") or None,
-            delivery_available=bool(data.get("delivery_available", False)),
-            seller_type=data.get("seller_type") or None,
-        )
-    except Exception as exc:
-        logger.warning("LLM parse failed (%s) for title=%r: %s", name, title, exc)
-        return ParsedAdContent()
+    prompt = f"Title: {(title or '').strip()}\n\nDescription:\n{(description or '').strip()}"
+    messages = [
+        {"role": "system", "content": _SYSTEM},
+        {"role": "user", "content": prompt},
+    ]
+
+    for _ in range(len(parser._clients)):
+        name, client = parser.next()
+        try:
+            response = client.invoke(messages)
+            raw = response.content.strip()
+            raw = re.sub(r'^```(?:json)?\s*', '', raw)
+            raw = re.sub(r'\s*```$', '', raw)
+            data = json.loads(raw)
+            logger.debug("Parsed via %s: %s", name, title[:50])
+            return ParsedAdContent(
+                specs={k: str(v) for k, v in (data.get("specs") or {}).items() if v and str(v).strip()},
+                condition=data.get("condition") or None,
+                seller_notes=data.get("seller_notes") or None,
+                phone=data.get("phone") or None,
+                delivery_available=bool(data.get("delivery_available", False)),
+                seller_type=data.get("seller_type") or None,
+            )
+        except Exception as exc:
+            exc_str = str(exc)
+            if 'RESOURCE_EXHAUSTED' in exc_str and ('PerDay' in exc_str or 'per_day' in exc_str or 'limit: 0' in exc_str):
+                parser.mark_exhausted(name)
+            else:
+                logger.warning("LLM parse failed (%s) for title=%r: %s — trying next provider", name, title, exc)
+
+    logger.error("All providers exhausted or failed for title=%r", title)
+    return ParsedAdContent()
