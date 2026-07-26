@@ -44,24 +44,22 @@ class ParsedAdContent(BaseModel):
 def _build_clients():
     """Build all available LLM clients. Returns a list of (name, client) tuples."""
     clients = []
+    model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
-    groq_key = os.getenv("GROQ_API_KEY")
-    if groq_key:
-        from langchain_groq import ChatGroq
-        clients.append(("groq", ChatGroq(
-            model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
-            api_key=groq_key,
-            temperature=0,
-        )))
+    from langchain_groq import ChatGroq
+    for i, var in enumerate(["GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_3"]):
+        key = os.getenv(var)
+        if key:
+            name = "groq" if i == 0 else f"groq{i + 1}"
+            clients.append((name, ChatGroq(model=model, api_key=key, temperature=0)))
 
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if gemini_key:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        clients.append(("gemini", ChatGoogleGenerativeAI(
-            model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-            google_api_key=gemini_key,
-            temperature=0,
-        )))
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    for i, var in enumerate(["GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"]):
+        key = os.getenv(var)
+        if key:
+            name = "gemini" if i == 0 else f"gemini{i + 1}"
+            clients.append((name, ChatGoogleGenerativeAI(model=gemini_model, google_api_key=key, temperature=0)))
 
     if not clients:
         raise RuntimeError("No LLM API keys found. Set GROQ_API_KEY and/or GEMINI_API_KEY.")

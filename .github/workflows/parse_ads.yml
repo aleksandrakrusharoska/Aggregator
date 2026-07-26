@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: 'Max ads to parse (0 = all pending, default: 600)'
+        description: 'Max ads to parse (0 = all pending, default: 3000)'
         required: false
-        default: '1200'
+        default: '3000'
       source:
         description: 'Filter by source (leave blank for both)'
         required: false
@@ -48,11 +48,14 @@ jobs:
           echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
           echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
           echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}" >> .env
+          echo "GROQ_API_KEY_2=${{ secrets.GROQ_API_KEY_2 }}" >> .env
+          echo "GROQ_API_KEY_3=${{ secrets.GROQ_API_KEY_3 }}" >> .env
           echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> .env
+          echo "GEMINI_API_KEY_2=${{ secrets.GEMINI_API_KEY_2 }}" >> .env
 
       - name: Run LLM parser
         run: |
-          LIMIT="${{ github.event.inputs.limit || '1200' }}"
+          LIMIT="${{ github.event.inputs.limit || '3000' }}"
           SOURCE="${{ github.event.inputs.source || '' }}"
 
           ARGS=""
