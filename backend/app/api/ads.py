@@ -102,6 +102,87 @@ def get_similar(cluster_id: int, exclude_url: str | None = None, limit: int = 6)
     return result.data
 
 
+@router.get("/analytics/brands")
+def get_brand_analytics():
+    import re
+    import statistics
+
+    BRANDS = {
+        'Apple':    ['iphone', 'ipad', 'macbook', 'imac', 'airpod'],
+        'Samsung':  ['samsung', 'galaxy'],
+        'Xiaomi':   ['xiaomi', 'redmi', 'poco'],
+        'Huawei':   ['huawei'],
+        'Honor':    ['honor'],
+        'Sony':     ['sony', 'xperia'],
+        'Lenovo':   ['lenovo', 'thinkpad', 'ideapad'],
+        'Dell':     ['dell'],
+        'Asus':     ['asus', 'rog'],
+        'Acer':     ['acer'],
+        'Motorola': ['motorola', 'moto g', 'moto e'],
+        'OnePlus':  ['oneplus', 'one plus'],
+        'Nokia':    ['nokia'],
+        'Realme':   ['realme'],
+        'Google':   ['pixel'],
+    }
+    HP_RE = re.compile(r'\bhp\b')
+
+    sb = get_supabase()
+    brand_prices: dict[str, list[float]] = {b: [] for b in BRANDS}
+    brand_prices['HP'] = []
+
+    offset, batch = 0, 1000
+    while True:
+        rows = (
+            sb.table("ads")
+            .select("title, price_eur")
+            .eq("ad_type", "product")
+            .not_.is_("price_eur", "null")
+            .gt("price_eur", 0)
+            .range(offset, offset + batch - 1)
+            .execute()
+            .data
+        )
+        if not rows:
+            break
+        for row in rows:
+            title = (row.get("title") or "").lower()
+            price = row.get("price_eur")
+            if not price:
+                continue
+            matched = False
+            for brand, keywords in BRANDS.items():
+                if any(kw in title for kw in keywords):
+                    brand_prices[brand].append(float(price))
+                    matched = True
+                    break
+            if not matched and HP_RE.search(title):
+                brand_prices['HP'].append(float(price))
+        if len(rows) < batch:
+            break
+        offset += batch
+        if offset >= 60000:
+            break
+
+    result = []
+    for brand, prices in brand_prices.items():
+        if len(prices) < 3:
+            continue
+        sorted_p = sorted(prices)
+        n = len(sorted_p)
+        result.append({
+            "brand": brand,
+            "count": n,
+            "avg_price": round(sum(prices) / n, 2),
+            "min_price": round(sorted_p[0], 2),
+            "max_price": round(sorted_p[-1], 2),
+            "median_price": round(statistics.median(prices), 2),
+            "q1": round(sorted_p[max(0, n // 4 - 1)], 2),
+            "q3": round(sorted_p[min(n - 1, 3 * n // 4)], 2),
+        })
+
+    return sorted(result, key=lambda x: -x["count"])
+
+
 @router.get("/categories")
 def get_categories():
     sb = get_supabase()
