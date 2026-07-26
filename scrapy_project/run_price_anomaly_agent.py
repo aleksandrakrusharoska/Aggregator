@@ -46,11 +46,12 @@ def fetch_ads(sb, source=None) -> list[dict]:
 
 
 def store_results(sb, results: list[dict]):
-    for i in range(0, len(results), STORE_BATCH):
-        batch = results[i:i + STORE_BATCH]
+    unique = list({r['ad_url']: r for r in results}.values())
+    for i in range(0, len(unique), STORE_BATCH):
+        batch = unique[i:i + STORE_BATCH]
         try:
             sb.table('ads').upsert(batch, on_conflict='ad_url').execute()
-            log.info('  stored %d / %d', i + len(batch), len(results))
+            log.info('  stored %d / %d', i + len(batch), len(unique))
         except Exception as exc:
             log.error('Store failed: %s', exc)
 

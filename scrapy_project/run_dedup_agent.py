@@ -52,13 +52,21 @@ def fetch_ads(sb, source: str | None = None) -> list[dict]:
 
 
 def store(sb, pairs: list[dict]) -> None:
-    for i in range(0, len(pairs), STORE_BATCH):
-        batch = pairs[i:i + STORE_BATCH]
+    # Deduplicate by (ad_url_1, ad_url_2), keeping highest similarity score
+    seen: dict[tuple, dict] = {}
+    for p in pairs:
+        key = (p['ad_url_1'], p['ad_url_2'])
+        if key not in seen or p['similarity_score'] > seen[key]['similarity_score']:
+            seen[key] = p
+    unique = list(seen.values())
+
+    for i in range(0, len(unique), STORE_BATCH):
+        batch = unique[i:i + STORE_BATCH]
         try:
             sb.table('duplicates').upsert(
                 batch, on_conflict='ad_url_1,ad_url_2'
             ).execute()
-            log.info('  stored %d / %d pairs', i + len(batch), len(pairs))
+            log.info('  stored %d / %d pairs', i + len(batch), len(unique))
         except Exception as exc:
             log.error('Store failed: %s', exc)
 
