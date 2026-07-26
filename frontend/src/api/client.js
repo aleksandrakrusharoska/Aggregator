@@ -1,4 +1,5 @@
-const BASE = '/api/ads'
+const API_ROOT = import.meta.env.VITE_API_URL ?? ''
+const BASE = `${API_ROOT}/api/ads`
 
 export async function fetchAds(filters = {}) {
   const { source, category, condition, min_price, max_price, q, sort, page, anomaly_only, ad_type } = filters
