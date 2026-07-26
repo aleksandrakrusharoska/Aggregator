@@ -1,6 +1,10 @@
+import os
 import scrapy
+from dotenv import load_dotenv
 from ads_scraper.items import AdItem
 from ads_scraper.spiders.pazar3_spider import Pazar3Spider
+
+load_dotenv()
 
 BASE = 'https://www.pazar3.mk/oglasi/elektronika/prodazba-kupuvanje-zamena'
 
@@ -9,9 +13,9 @@ class Pazar3OldestSpider(Pazar3Spider):
     """
     Crawls pazar3 from the oldest page backwards to the newest.
 
-    Use this to recover historical ads missed in earlier crawls.
-    All page URLs are queued upfront so a 404 on one page skips it
-    and the rest continue normally.
+    Skips detail page visits for ads already in the DB so each run
+    advances further toward the data gap instead of re-scraping the
+    same oldest pages every time.
 
     Usage:
         scrapy crawl pazar3_oldest -s DOWNLOAD_DELAY=2 -s CONCURRENT_REQUESTS=1 -s LOG_LEVEL=INFO
@@ -19,8 +23,41 @@ class Pazar3OldestSpider(Pazar3Spider):
     name = 'pazar3_oldest'
 
     def start_requests(self):
-        # Fetch page 1 first just to discover the total number of pages
+        self._known = self._load_known_urls()
         yield scrapy.Request(BASE, callback=self._discover_pages)
+
+    def _load_known_urls(self):
+        url = os.getenv('SUPABASE_URL')
+        key = os.getenv('SUPABASE_KEY')
+        if not url or not key:
+            self.logger.warning('No Supabase credentials — known-URL skip disabled')
+            return set()
+        try:
+            from supabase import create_client
+            client = create_client(url, key)
+            known = set()
+            offset, batch = 0, 1000
+            while True:
+                rows = (
+                    client.table('ads')
+                    .select('ad_url')
+                    .eq('source', 'pazar3')
+                    .range(offset, offset + batch - 1)
+                    .execute()
+                    .data
+                )
+                if not rows:
+                    break
+                for r in rows:
+                    known.add(r['ad_url'])
+                if len(rows) < batch:
+                    break
+                offset += batch
+            self.logger.info('Loaded %d known pazar3 URLs — will skip detail pages for these', len(known))
+            return known
+        except Exception as exc:
+            self.logger.warning('Could not load known URLs: %s', exc)
+            return set()
 
     def _discover_pages(self, response):
         page_nos = [
@@ -34,7 +71,7 @@ class Pazar3OldestSpider(Pazar3Spider):
             yield scrapy.Request(
                 f'{BASE}?Page={page}',
                 callback=self._parse_listing_page,
-                priority=page,          # higher page number = crawled first
+                priority=page,
                 errback=self._on_error,
                 meta={'page': page},
             )
@@ -68,13 +105,19 @@ class Pazar3OldestSpider(Pazar3Spider):
             item['location']    = crumbs[-1].strip() if crumbs else None
             item['source']      = 'pazar3'
 
-            if href:
-                yield response.follow(
-                    href,
-                    callback=self.parse_ad,   # reuse parent's detail parser
-                    meta={'listing': dict(item)},
-                    errback=self._on_error,
-                )
-            else:
+            if not href:
                 yield item
+                continue
+
+            ad_url = response.urljoin(href)
+            if ad_url in self._known:
+                # Already in DB — no need to visit detail page
+                continue
+
+            yield response.follow(
+                href,
+                callback=self.parse_ad,
+                meta={'listing': dict(item)},
+                errback=self._on_error,
+            )
         # No next-page following — all pages are already queued from _discover_pages
