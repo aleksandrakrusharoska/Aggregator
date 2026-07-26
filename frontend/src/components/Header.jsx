@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 
-export default function Header({ stats, theme, onThemeToggle, q, onSearch, wishlistCount, onWishlistOpen }) {
+export default function Header({ stats, theme, onThemeToggle, q, onSearch, wishlistCount, onWishlistOpen, page, onPageChange }) {
   const [input, setInput] = useState(q || '')
   const timerRef = useRef(null)
 
@@ -43,6 +43,23 @@ export default function Header({ stats, theme, onThemeToggle, q, onSearch, wishl
               Агрегатор <span className="text-slate-400 dark:text-slate-500 font-normal">· техника</span>
             </div>
           </div>
+        </div>
+
+        {/* Nav tabs */}
+        <div className="flex items-center gap-1 shrink-0">
+          {[['ads', 'Огласи'], ['analytics', 'Аналитика']].map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => onPageChange(key)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                page === key
+                  ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* Search */}

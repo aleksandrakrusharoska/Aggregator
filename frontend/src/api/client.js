@@ -31,6 +31,12 @@ export async function fetchCategories() {
   return res.json()
 }
 
+export async function fetchBrandStats() {
+  const res = await fetch(`${BASE}/analytics/brands`)
+  if (!res.ok) throw new Error('fetch_failed')
+  return res.json()
+}
+
 export async function fetchSimilar(clusterId, excludeUrl) {
   const params = new URLSearchParams({ cluster_id: clusterId, limit: 6 })
   if (excludeUrl) params.set('exclude_url', excludeUrl)

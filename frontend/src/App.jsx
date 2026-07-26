@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar'
 import AdGrid from './components/AdGrid'
 import AdModal from './components/AdModal'
 import WishlistPanel from './components/WishlistPanel'
+import AnalyticsPage from './pages/AnalyticsPage'
 import { useWishlist } from './hooks/useWishlist'
 import { fetchAds, fetchStats, fetchCategories } from './api/client'
 
@@ -21,6 +22,7 @@ const INITIAL_FILTERS = {
 }
 
 export default function App() {
+  const [page, setPage] = useState('ads')
   const [theme, setTheme] = useState(
     () => localStorage.getItem('theme') || 'dark'
   )
@@ -79,19 +81,24 @@ export default function App() {
         onSearch={q => update('q', q)}
         wishlistCount={wishlist.length}
         onWishlistOpen={() => setWishlistOpen(true)}
+        page={page}
+        onPageChange={setPage}
       />
 
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          filters={filters}
-          stats={stats}
-          categories={categories}
-          onChange={update}
-          onClear={clearFilters}
-        />
+        {page === 'ads' && (
+          <Sidebar
+            filters={filters}
+            stats={stats}
+            categories={categories}
+            onChange={update}
+            onClear={clearFilters}
+          />
+        )}
 
         <main className="flex-1 overflow-y-auto">
-          {error && (
+          {page === 'analytics' && <AnalyticsPage theme={theme} />}
+          {page === 'ads' && error && (
             <div className="mx-6 mt-6 flex items-start gap-3 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800">
               <svg className="w-5 h-5 text-red-500 dark:text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -109,7 +116,7 @@ export default function App() {
               </button>
             </div>
           )}
-          <AdGrid
+          {page === 'ads' && <AdGrid
             ads={ads}
             total={total}
             loading={loading}
@@ -119,7 +126,7 @@ export default function App() {
             onAdClick={setSelectedAd}
             isSaved={isSaved}
             onWishlistToggle={toggleWishlist}
-          />
+          />}
         </main>
       </div>
 
