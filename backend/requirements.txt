@@ -1,34 +1,4 @@
-# Web framework
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
-python-dotenv==1.0.1
-pydantic==2.10.4
 pydantic-settings==2.7.0
-
-# Database
-sqlalchemy==2.0.36
-psycopg2-binary==2.9.10
-alembic==1.14.0
-pgvector==0.3.6
-
-# Task queue (агенти)
-celery==5.4.0
-redis==5.2.1
-
-# Scraping
-httpx==0.28.1
-beautifulsoup4==4.12.3
-playwright==1.49.1
-
-# ML / NLP
-scikit-learn==1.6.0
-sentence-transformers==3.3.1
-numpy==2.2.1
-pandas==2.2.3
-
-# LangChain (оркестрација + LLM нормализација)
-langchain==0.3.13
-langchain-community==0.3.13
-
-# Dev / testing
-pytest==9.1.1
+supabase==2.31.0
