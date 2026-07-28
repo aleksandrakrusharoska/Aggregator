@@ -60,24 +60,31 @@ class Pazar3DateBackfillSpider(scrapy.Spider):
         self._client = create_client(url, key)
 
     def _load_null_urls(self):
+        import time
         offset, batch = 0, 1000
-        while True:
-            rows = (
-                self._client.table('ads')
-                .select('ad_url')
-                .eq('source', 'pazar3')
-                .is_('posted_date', 'null')
-                .range(offset, offset + batch - 1)
-                .execute()
-                .data
-            )
-            if not rows:
-                break
-            for r in rows:
-                self._null_urls.add(r['ad_url'])
-            if len(rows) < batch:
-                break
-            offset += batch
+        try:
+            while True:
+                time.sleep(1)
+                rows = (
+                    self._client.table('ads')
+                    .select('ad_url')
+                    .eq('source', 'pazar3')
+                    .is_('posted_date', 'null')
+                    .range(offset, offset + batch - 1)
+                    .execute()
+                    .data
+                )
+                if not rows:
+                    break
+                for r in rows:
+                    self._null_urls.add(r['ad_url'])
+                logger.info('Loaded %d null-date URLs so far...', len(self._null_urls))
+                if len(rows) < batch:
+                    break
+                offset += batch
+        except Exception as exc:
+            logger.error('Failed to load null URLs from Supabase (loaded %d so far): %s',
+                         len(self._null_urls), exc)
 
     def parse(self, response):
         now = datetime.now(timezone.utc).isoformat()
@@ -110,8 +117,8 @@ class Pazar3DateBackfillSpider(scrapy.Spider):
             logger.info('Page %s — updated %d dates (remaining: %d)',
                         response.url[-60:], found_on_page, len(self._null_urls))
 
-        if not self._null_urls:
-            logger.info('All null posted_dates filled. Stopping.')
+        if not self._null_urls and self._updated > 0:
+            logger.info('All null posted_dates filled. Total updated: %d', self._updated)
             return
 
         # Follow next page
