@@ -1,0 +1,159 @@
+"""
+Detail-page re-scrape spider for pazar3.
+
+Loads ads with missing key fields from Supabase and visits their detail
+pages directly (no listing page traversal) to fill in:
+  posted_date, category, condition, seller_name, description
+
+Run in batches of --limit ads per GitHub Actions run (~83 min per 5000 ads).
+Each run naturally picks up the next batch since filled ads are excluded.
+"""
+import logging
+import os
+import time
+from datetime import datetime, timezone
+
+import scrapy
+from dotenv import load_dotenv
+
+from ads_scraper.normalize import parse_price, resolve_posted_date
+
+load_dotenv()
+logger = logging.getLogger(__name__)
+
+BATCH_SIZE = 100
+
+
+class Pazar3RescrapeSpider(scrapy.Spider):
+    name = 'pazar3_rescrape'
+    allowed_domains = ['pazar3.mk']
+    custom_settings = {
+        'DOWNLOAD_DELAY': 2,
+        'CONCURRENT_REQUESTS': 2,
+        'AUTOTHROTTLE_ENABLED': True,
+        'AUTOTHROTTLE_TARGET_CONCURRENCY': 1.5,
+        'ITEM_PIPELINES': {},
+    }
+
+    def __init__(self, limit=5000, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._limit = int(limit)
+        self._client = None
+        self._batch: list[dict] = []
+        self._updated = 0
+
+    def start_requests(self):
+        self._connect()
+        urls = self._load_urls()
+        if not urls:
+            logger.info('No ads with missing fields found.')
+            return
+        logger.info('Re-scraping %d ads...', len(urls))
+        for url in urls:
+            yield scrapy.Request(url, callback=self.parse_ad, errback=self.on_error)
+
+    def _connect(self):
+        from supabase import create_client
+        url = os.getenv('SUPABASE_URL')
+        key = os.getenv('SUPABASE_KEY')
+        if not url or not key:
+            raise RuntimeError('SUPABASE_URL and SUPABASE_KEY must be set.')
+        self._client = create_client(url, key)
+
+    def _load_urls(self) -> list[str]:
+        urls = []
+        offset, batch = 0, 1000
+        try:
+            while len(urls) < self._limit:
+                time.sleep(1)
+                rows = (
+                    self._client.table('ads')
+                    .select('ad_url')
+                    .eq('source', 'pazar3')
+                    .is_('posted_date', 'null')
+                    .range(offset, offset + batch - 1)
+                    .execute()
+                    .data
+                )
+                if not rows:
+                    break
+                for r in rows:
+                    urls.append(r['ad_url'])
+                logger.info('Loaded %d URLs so far...', len(urls))
+                if len(rows) < batch:
+                    break
+                offset += batch
+        except Exception as exc:
+            logger.error('Failed to load URLs from Supabase (loaded %d): %s', len(urls), exc)
+        return urls[:self._limit]
+
+    def parse_ad(self, response):
+        ad_url = response.url
+        update = {'ad_url': ad_url}
+
+        # posted_date
+        pub_date = response.css('bdi.published-date::text').get()
+        pub_time = response.css('bdi.published-time::text').get()
+        if pub_date:
+            raw = (pub_date.strip() + ' ' + pub_time.strip()).strip() if pub_time else pub_date.strip()
+            resolved = resolve_posted_date(raw, datetime.now(timezone.utc).isoformat())
+            if resolved:
+                update['posted_date'] = resolved
+
+        # Tag-based fields: condition, category
+        tag_map = {}
+        for tag in response.css('a.tag-item'):
+            label = tag.css('span::text').get('').strip().rstrip(':').strip()
+            value = tag.css('bdi::text').get('').strip()
+            if label and value:
+                tag_map[label] = value
+
+        condition = tag_map.get('Condition') or tag_map.get('Состојба')
+        if condition:
+            update['condition'] = condition
+
+        category = tag_map.get('Производи')
+        if category:
+            update['category'] = category
+
+        # seller_name
+        seller = response.css('div.user-name.ci-text-base::text').get()
+        if seller:
+            update['seller_name'] = seller.strip()
+
+        # description
+        desc = response.css('meta[name="description"]::attr(content)').get()
+        if desc:
+            update['description'] = desc.strip()
+
+        # price_note — only if no numeric price found
+        price_val = response.css('bdi.format-money-int::attr(value)').get()
+        if not price_val:
+            price_text = response.css('p.list-price::text, .ad-price::text').get()
+            if price_text:
+                parsed = parse_price(price_text.strip())
+                if parsed.get('price_note'):
+                    update['price_note'] = parsed['price_note']
+
+        if len(update) > 1:  # more than just ad_url
+            self._batch.append(update)
+            if len(self._batch) >= BATCH_SIZE:
+                self._flush()
+
+    def on_error(self, failure):
+        logger.warning('Failed to fetch %s: %s', failure.request.url, failure.value)
+
+    def _flush(self):
+        if not self._batch:
+            return
+        try:
+            self._client.table('ads').upsert(self._batch, on_conflict='ad_url').execute()
+            self._updated += len(self._batch)
+            logger.info('Flushed %d updates (total: %d)', len(self._batch), self._updated)
+        except Exception as exc:
+            logger.error('Supabase flush failed: %s', exc)
+        self._batch = []
+
+    def closed(self, reason):
+        self._flush()
+        logger.info('Re-scrape done. Total updated: %d. Reason: %s', self._updated, reason)
