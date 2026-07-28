@@ -12,6 +12,8 @@ _MK_MONTHS = {
 
 _DATE_RE = re.compile(r'^(\d{1,2})\s+([^\d]+?)\.*\s+(\d{1,2}:\d{2})$')
 _RELATIVE_RE = re.compile(r'^(Денес|Вчера)\s+(\d{1,2}:\d{2})$', re.IGNORECASE)
+# Detail page format: "мај 12 2015" or "мај 12 2015 02:22"
+_DATE_FULL_RE = re.compile(r'^([^\d]+?)\s+(\d{1,2})\s+(\d{4})', re.IGNORECASE)
 
 # Supplementary-plane emoji + common BMP symbol blocks
 _EMOJI_RE = re.compile(
@@ -138,5 +140,18 @@ def resolve_posted_date(posted: str | None, scraped_at: str | None) -> str | Non
             return date(year, month, day).isoformat()
         except ValueError:
             return None
+
+    # Detail page format: "мај 12 2015" or "мај 12 2015 02:22"
+    m_full = _DATE_FULL_RE.match(posted.strip())
+    if m_full:
+        month_key = m_full.group(1).rstrip('.').strip().lower()
+        month = _MK_MONTHS.get(month_key)
+        day = int(m_full.group(2))
+        year = int(m_full.group(3))
+        if month:
+            try:
+                return date(year, month, day).isoformat()
+            except ValueError:
+                return None
 
     return None
