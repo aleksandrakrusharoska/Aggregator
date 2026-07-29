@@ -121,6 +121,23 @@ class Pazar3RescrapeSpider(scrapy.Spider):
         if category:
             update['category'] = category
 
+        listing_type_raw = (
+            tag_map.get('Вид на оглас') or
+            tag_map.get('Тип на оглас') or
+            tag_map.get('Вид') or
+            tag_map.get('Тип')
+        )
+        if listing_type_raw:
+            lt = listing_type_raw.strip().lower()
+            if 'продав' in lt:
+                update['listing_type'] = 'sale'
+            elif 'купув' in lt:
+                update['listing_type'] = 'buy'
+            elif 'разменув' in lt or 'замена' in lt:
+                update['listing_type'] = 'trade'
+            else:
+                update['listing_type'] = listing_type_raw.strip()
+
         # seller_name
         seller = response.css('div.user-name.ci-text-base::text').get()
         if seller:
