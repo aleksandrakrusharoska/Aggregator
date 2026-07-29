@@ -45,7 +45,7 @@ def list_ads(
     if q:
         query = query.ilike("title", f"%{q}%")
     if anomaly_only:
-        query = query.eq("is_anomaly", True)
+        query = query.eq("is_anomaly", True).lt("price_zscore", 0)
     if ad_type:
         query = query.eq("ad_type", ad_type)
 

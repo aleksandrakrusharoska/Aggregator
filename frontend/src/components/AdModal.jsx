@@ -47,6 +47,14 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
   const specs = currentAd.specs && typeof currentAd.specs === 'object' ? currentAd.specs : {}
   const hasSpecs = Object.keys(specs).length > 0
 
+  const sellerNotes = (() => {
+    const notes = currentAd.seller_notes?.trim()
+    const desc = currentAd.description?.trim()
+    if (!notes) return null
+    if (desc && desc.toLowerCase().includes(notes.toLowerCase())) return null
+    return notes
+  })()
+
   const isCheapAnomaly = currentAd.is_anomaly && currentAd.price_zscore <= 0
   const isExpensiveAnomaly = currentAd.is_anomaly && currentAd.price_zscore > 0
 
@@ -338,18 +346,18 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
               )}
 
               {/* Seller notes */}
-              {currentAd.seller_notes && (
+              {sellerNotes && (
                 <div>
                   <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">
-                    Белешки
+                    Клучни инфо
                   </h4>
                   <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed italic">
-                    {currentAd.seller_notes}
+                    {sellerNotes}
                   </p>
                 </div>
               )}
 
-              {!hasSpecs && !currentAd.description && !currentAd.seller_notes && (
+              {!hasSpecs && !currentAd.description && !sellerNotes && (
                 <p className="text-sm text-slate-400 dark:text-slate-600 italic">
                   Нема дополнителни информации
                 </p>
