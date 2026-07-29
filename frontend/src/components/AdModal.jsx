@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fetchSimilar } from '../api/client'
 import { formatDate } from '../utils/formatDate'
 
@@ -12,6 +12,7 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
   const [currentAd, setCurrentAd] = useState(ad)
   const [imgIdx, setImgIdx] = useState(0)
   const [similar, setSimilar] = useState([])
+  const similarScrollRef = useRef(null)
   const images = Array.isArray(currentAd.images) ? currentAd.images : (currentAd.image_url ? [currentAd.image_url] : [])
 
   useEffect(() => { setCurrentAd(ad); setImgIdx(0) }, [ad.ad_url])
@@ -368,10 +369,32 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
           {/* Similar products */}
           {similar.length > 0 && (
             <div className="border-t border-slate-100 dark:border-slate-800 px-5 py-4">
-              <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">
-                Слични производи
-              </h4>
-              <div className="flex gap-3 overflow-x-auto pb-1">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                  Слични производи
+                </h4>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => similarScrollRef.current?.scrollBy({ left: -160, behavior: 'smooth' })}
+                    className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 transition-colors"
+                    aria-label="Scroll left"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => similarScrollRef.current?.scrollBy({ left: 160, behavior: 'smooth' })}
+                    className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 transition-colors"
+                    aria-label="Scroll right"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div ref={similarScrollRef} className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide">
                 {similar.map(s => {
                   const thumb = Array.isArray(s.images) ? s.images[0] : null
                   return (
