@@ -5,7 +5,7 @@ Loads ads with missing key fields from Supabase and visits their detail
 pages directly (no listing page traversal) to fill in:
   posted_date, category, condition, seller_name, description
 
-Run in batches of --limit ads per GitHub Actions run (~83 min per 5000 ads).
+Run in batches of --limit ads per GitHub Actions run (~3-4 hours per 20000 ads).
 Each run naturally picks up the next batch since filled ads are excluded.
 """
 import logging
@@ -27,6 +27,7 @@ BATCH_SIZE = 100
 class Pazar3RescrapeSpider(scrapy.Spider):
     name = 'pazar3_rescrape'
     allowed_domains = ['pazar3.mk']
+    start_urls = []  # populated in __init__
     custom_settings = {
         'DOWNLOAD_DELAY': 2,
         'CONCURRENT_REQUESTS': 2,
@@ -41,25 +42,21 @@ class Pazar3RescrapeSpider(scrapy.Spider):
         self._client = None
         self._batch: list[dict] = []
         self._updated = 0
+        self._setup()
 
-    def start_requests(self):
+    def _setup(self):
         try:
             self._connect()
+            self.start_urls = self._load_urls()
+            logger.info('Loaded %d URLs to re-scrape.', len(self.start_urls))
         except Exception as exc:
-            logger.error('Supabase connection failed: %s', exc)
-            return
-        urls = self._load_urls()
-        if not urls:
-            logger.info('No ads with missing fields found.')
-            return
-        logger.info('Re-scraping %d ads...', len(urls))
-        for url in urls:
-            yield scrapy.Request(url, callback=self.parse_ad, errback=self.on_error)
+            logger.error('Setup failed: %s', exc)
+            self.start_urls = []
 
     def _connect(self):
         from supabase import create_client
-        url = self.settings.get('SUPABASE_URL') or os.getenv('SUPABASE_URL')
-        key = self.settings.get('SUPABASE_KEY') or os.getenv('SUPABASE_KEY')
+        url = os.getenv('SUPABASE_URL')
+        key = os.getenv('SUPABASE_KEY')
         if not url or not key:
             raise RuntimeError('SUPABASE_URL and SUPABASE_KEY must be set.')
         self._client = create_client(url, key)
@@ -89,8 +86,11 @@ class Pazar3RescrapeSpider(scrapy.Spider):
                     break
                 offset += batch
         except Exception as exc:
-            logger.error('Failed to load URLs from Supabase (loaded %d): %s', len(urls), exc)
+            logger.error('Failed to load URLs (loaded %d so far): %s', len(urls), exc)
         return urls[:self._limit]
+
+    def parse(self, response):
+        return self.parse_ad(response)
 
     def parse_ad(self, response):
         ad_url = response.url
@@ -140,12 +140,12 @@ class Pazar3RescrapeSpider(scrapy.Spider):
                 if parsed.get('price_note'):
                     update['price_note'] = parsed['price_note']
 
-        if len(update) > 1:  # more than just ad_url
+        if len(update) > 1:
             self._batch.append(update)
             if len(self._batch) >= BATCH_SIZE:
                 self._flush()
 
-    def on_error(self, failure):
+    def errback(self, failure):
         logger.warning('Failed to fetch %s: %s', failure.request.url, failure.value)
 
     def _flush(self):
