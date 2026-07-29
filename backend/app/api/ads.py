@@ -169,15 +169,23 @@ def get_brand_analytics():
             continue
         sorted_p = sorted(prices)
         n = len(sorted_p)
+        q1 = sorted_p[max(0, n // 4 - 1)]
+        q3 = sorted_p[min(n - 1, 3 * n // 4)]
+        iqr = q3 - q1
+        low, high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        filtered = [p for p in sorted_p if low <= p <= high]
+        if len(filtered) < 3:
+            filtered = sorted_p
+        fn = len(filtered)
         result.append({
             "brand": brand,
             "count": n,
-            "avg_price": round(sum(prices) / n, 2),
-            "min_price": round(sorted_p[0], 2),
-            "max_price": round(sorted_p[-1], 2),
-            "median_price": round(statistics.median(prices), 2),
-            "q1": round(sorted_p[max(0, n // 4 - 1)], 2),
-            "q3": round(sorted_p[min(n - 1, 3 * n // 4)], 2),
+            "avg_price": round(sum(filtered) / fn, 2),
+            "min_price": round(filtered[0], 2),
+            "max_price": round(filtered[-1], 2),
+            "median_price": round(statistics.median(filtered), 2),
+            "q1": round(q1, 2),
+            "q3": round(q3, 2),
         })
 
     return sorted(result, key=lambda x: -x["count"])
