@@ -43,7 +43,11 @@ class Pazar3RescrapeSpider(scrapy.Spider):
         self._updated = 0
 
     def start_requests(self):
-        self._connect()
+        try:
+            self._connect()
+        except Exception as exc:
+            logger.error('Supabase connection failed: %s', exc)
+            return
         urls = self._load_urls()
         if not urls:
             logger.info('No ads with missing fields found.')
@@ -54,11 +58,12 @@ class Pazar3RescrapeSpider(scrapy.Spider):
 
     def _connect(self):
         from supabase import create_client
-        url = os.getenv('SUPABASE_URL')
-        key = os.getenv('SUPABASE_KEY')
+        url = self.settings.get('SUPABASE_URL') or os.getenv('SUPABASE_URL')
+        key = self.settings.get('SUPABASE_KEY') or os.getenv('SUPABASE_KEY')
         if not url or not key:
             raise RuntimeError('SUPABASE_URL and SUPABASE_KEY must be set.')
         self._client = create_client(url, key)
+        logger.info('Supabase connected.')
 
     def _load_urls(self) -> list[str]:
         urls = []

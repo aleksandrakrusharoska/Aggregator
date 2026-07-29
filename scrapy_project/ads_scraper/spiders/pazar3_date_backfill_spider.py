@@ -53,11 +53,12 @@ class Pazar3DateBackfillSpider(scrapy.Spider):
 
     def _connect(self):
         from supabase import create_client
-        url = os.getenv('SUPABASE_URL')
-        key = os.getenv('SUPABASE_KEY')
+        url = self.settings.get('SUPABASE_URL') or os.getenv('SUPABASE_URL')
+        key = self.settings.get('SUPABASE_KEY') or os.getenv('SUPABASE_KEY')
         if not url or not key:
             raise RuntimeError('SUPABASE_URL and SUPABASE_KEY must be set.')
         self._client = create_client(url, key)
+        logger.info('Supabase connected.')
 
     def _load_null_urls(self):
         import time
