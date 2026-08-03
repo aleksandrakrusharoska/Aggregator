@@ -26,6 +26,13 @@ class Pazar3OldestSpider(Pazar3Spider):
         self._known = self._load_known_urls()
         yield scrapy.Request(BASE, callback=self._discover_pages)
 
+    async def start(self):
+        # Scrapy >=2.13 drives crawling from start() rather than
+        # start_requests() — bridge to the sync generator above so the
+        # known-URL loading and _discover_pages callback actually run.
+        for request in self.start_requests():
+            yield request
+
     def _load_known_urls(self):
         url = os.getenv('SUPABASE_URL')
         key = os.getenv('SUPABASE_KEY')

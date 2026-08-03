@@ -1,16 +1,18 @@
 """
-Date backfill spider for pazar3.
+Date backfill spider for reklama5.
 
 Crawls listing pages only (no detail page visits) and updates posted_date
 for ads that currently have NULL posted_date in Supabase.
 
-Reads the date from the listing card (span.pull-right) which gives accurate
-dates for ads within the last ~12 months.
+reklama5 never surfaces the posted date on the ad detail page itself —
+it's only shown on listing/search cards (div.ad-date-div-1), so unlike
+pazar3 this field can't be filled in by a detail-page rescrape.
 """
 import logging
 import os
+import re
 from datetime import datetime, timezone
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import scrapy
 from dotenv import load_dotenv
@@ -18,17 +20,19 @@ from dotenv import load_dotenv
 from ads_scraper.normalize import resolve_posted_date
 
 load_dotenv()
-
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 100
-START_URL = 'https://www.pazar3.mk/oglasi/elektronika/prodazba-kupuvanje-zamena'
+START_URLS = [
+    'https://reklama5.mk/Search?city=&cat=580&q=&sell=0&sell=1&buy=0&buy=1&trade=0&trade=1&includeOld=0&includeOld=1&includeNew=0&includeNew=1&cargoReady=0&DDVIncluded=0&private=0&company=0&page=1&SortByPrice=0&zz=1&pageView=',
+    'https://reklama5.mk/Search?city=&cat=558&q=&sell=0&sell=1&buy=0&buy=1&trade=0&trade=1&includeOld=0&includeOld=1&includeNew=0&includeNew=1&cargoReady=0&DDVIncluded=0&private=0&company=0&page=1&SortByPrice=0&zz=1&pageView=',
+]
 
 
-class Pazar3DateBackfillSpider(scrapy.Spider):
-    name = 'pazar3_date_backfill'
-    allowed_domains = ['pazar3.mk']
-    start_urls = [START_URL]
+class Reklama5DateBackfillSpider(scrapy.Spider):
+    name = 'reklama5_date_backfill'
+    allowed_domains = ['reklama5.mk', 'www.reklama5.mk']
+    start_urls = START_URLS
     custom_settings = {
         'DOWNLOAD_DELAY': 2,
         'CONCURRENT_REQUESTS': 1,
@@ -49,7 +53,8 @@ class Pazar3DateBackfillSpider(scrapy.Spider):
             logger.info('No ads with null posted_date — nothing to do.')
             return
         logger.info('Found %d ads with null posted_date.', len(self._null_urls))
-        yield scrapy.Request(START_URL, callback=self.parse)
+        for url in self.start_urls:
+            yield scrapy.Request(url, callback=self.parse)
 
     async def start(self):
         # Scrapy >=2.13 drives crawling from start() rather than
@@ -76,7 +81,7 @@ class Pazar3DateBackfillSpider(scrapy.Spider):
                 rows = (
                     self._client.table('ads')
                     .select('ad_url')
-                    .eq('source', 'pazar3')
+                    .eq('source', 'reklama5')
                     .is_('posted_date', 'null')
                     .range(offset, offset + batch - 1)
                     .execute()
@@ -94,23 +99,46 @@ class Pazar3DateBackfillSpider(scrapy.Spider):
             logger.error('Failed to load null URLs from Supabase (loaded %d so far): %s',
                          len(self._null_urls), exc)
 
+    def _next_page_url(self, url):
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query, keep_blank_values=True)
+        current = int(qs.get('page', ['1'])[0])
+        qs['page'] = [str(current + 1)]
+        return urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
+
+    def _page_info(self, response):
+        """Return (current_page, total_pages) from 'Страна N од M' span, or (None, None)."""
+        text = response.css('span.number-of-pages::text').get('')
+        m = re.search(r'(\d+)\s+од\s+(\d+)', text)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+        return None, None
+
     def parse(self, response):
         now = datetime.now(timezone.utc).isoformat()
         found_on_page = 0
 
-        for listing in response.css('div.row-listing, div.row.row-listing'):
-            href = listing.css('h2 a::attr(href)').get()
+        blocks = response.css('div.row.ad-top-div')
+        for block in blocks:
+            href = block.css('a.SearchAdTitle::attr(href)').get()
             if not href:
                 continue
             ad_url = response.urljoin(href)
             if ad_url not in self._null_urls:
                 continue
 
-            posted_raw = listing.css('span.pull-right::text').get()
-            if not posted_raw:
+            # Date sits either as bare text in the div (regular ads) or
+            # inside a <span> child (promoted ads) — collect both forms.
+            parts = [
+                t.strip() for t in
+                block.css('div.ad-date-div-1::text, div.ad-date-div-1 span::text').getall()
+                if t.strip()
+            ]
+            if not parts:
                 continue
+            posted_raw = re.sub(r'\s+', ' ', ' '.join(parts)).strip()
 
-            resolved = resolve_posted_date(posted_raw.strip(), now)
+            resolved = resolve_posted_date(posted_raw, now)
             if not resolved:
                 continue
 
@@ -125,19 +153,22 @@ class Pazar3DateBackfillSpider(scrapy.Spider):
             logger.info('Page %s — updated %d dates (remaining: %d)',
                         response.url[-60:], found_on_page, len(self._null_urls))
 
-        if not self._null_urls and self._updated > 0:
+        if not self._null_urls:
             logger.info('All null posted_dates filled. Total updated: %d', self._updated)
             return
 
-        # Follow next page
-        next_btn = response.css('a.next.page-number:not(.disabled)::attr(href)').get()
-        if not next_btn:
-            parsed = urlparse(response.url)
-            params = parse_qs(parsed.query)
-            current = int(params.get('Page', ['1'])[0])
-            next_btn = response.css(f'a.page-number[page-no="{current + 1}"]::attr(href)').get()
-        if next_btn:
-            yield response.follow(next_btn, callback=self.parse)
+        current_page, total_pages = self._page_info(response)
+        if current_page is not None and total_pages is not None:
+            if current_page >= total_pages:
+                logger.info('Reached last page (%d/%d) for %s — stopping this category.',
+                            current_page, total_pages, response.url)
+                return
+        elif not blocks:
+            logger.info('No items and no page-info on %s — stopping.', response.url)
+            return
+
+        next_url = self._next_page_url(response.url)
+        yield scrapy.Request(next_url, callback=self.parse)
 
     def _flush(self):
         if not self._batch:

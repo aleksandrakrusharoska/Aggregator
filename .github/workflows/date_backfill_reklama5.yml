@@ -1,19 +1,15 @@
-name: Rescrape Missing Ad Details (pazar3)
+name: Date Backfill (reklama5)
 
 on:
-  workflow_dispatch:
-    inputs:
-      limit:
-        description: 'Number of ads to process per run'
-        required: false
-        default: '5000'
+  workflow_dispatch:  # trigger manually from GitHub Actions tab
   schedule:
-    - cron: '0 21 * * *'  # daily at 21:00 UTC = 23:00 Macedonia time (UTC+2)
+    - cron: '30 9 * * *'  # daily at 09:30 UTC = 11:30 Macedonia time (UTC+2)
 
 jobs:
-  rescrape:
+  backfill:
     runs-on: ubuntu-latest
     timeout-minutes: 340
+
     defaults:
       run:
         working-directory: scrapy_project
@@ -37,8 +33,7 @@ jobs:
           echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
           echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
 
-      - name: Re-scrape detail pages
+      - name: Backfill posted_date from listing pages
         run: |
-          scrapy crawl pazar3_rescrape \
-            -a limit=${{ github.event.inputs.limit || '5000' }} \
+          scrapy crawl reklama5_date_backfill \
             -s LOG_LEVEL=INFO
