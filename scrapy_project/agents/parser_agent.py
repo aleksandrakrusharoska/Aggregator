@@ -21,7 +21,14 @@ Return ONLY a valid JSON object — no markdown, no code blocks, no explanation.
 CRITICAL RULES:
 - ONLY extract information EXPLICITLY written in the title/description. Do NOT invent or guess.
 - specs: key-value pairs of technical specs (RAM, storage, display, battery, processor, etc.) found in the text. Empty object if none mentioned.
-- condition: ONLY if explicitly mentioned. One of: "New", "Used - Like New", "Used", "For parts". Never put condition inside specs.
+- condition: ONLY if explicitly mentioned or clearly implied by words like "nov"/"нов" (new), "zachuvan"/"odlicna sostojba" (well-kept), "koristen"/"користено" (used), "za delovi" (for parts). One of:
+  "New" — brand new, unused, sealed/unopened.
+  "Used - Like New" — used but pristine, no visible wear, barely used.
+  "Used - Good" — used, functional, normal minor cosmetic wear.
+  "Used - Fair" — used, noticeable wear/damage but still functional.
+  "Used" — clearly used, but the text doesn't say enough to pick Like New/Good/Fair.
+  "For parts" — broken/non-functional, sold for parts or repair only.
+  If genuinely unclear, use null. Never put condition inside specs.
 - brand: the manufacturer, normalized to its common English name (e.g. "Apple", "Samsung", "Huawei", "Xiaomi"). null if not identifiable.
 - model: the specific model name/number, normalized to how it's commonly written, WITHOUT storage/color/condition/network words (e.g. "iPhone 11", "Galaxy S20+", "Galaxy A35 5G", "P30 Pro"). null if not identifiable.
 - seller_notes: seller personal comments (warranty, reason for selling, meeting place). null if none.

@@ -15,6 +15,7 @@ Usage:
     python run_parser_agent.py --source pazar3  # only one source
     python run_parser_agent.py --reparse   # reparse already-processed ads
     python run_parser_agent.py --reparse --condition New  # reparse only New-condition ads (for reference prices)
+    python run_parser_agent.py --fix-condition  # one-off: normalize non-canonical condition values
 """
 import argparse
 import logging
@@ -40,8 +41,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 FETCH_BATCH = 50  # rows per Supabase page
 
+CANONICAL_CONDITIONS = {"New", "Used - Like New", "Used - Good", "Used - Fair", "Used", "For parts"}
 
-def _fetch_pending_for_source(sb, source, reparse, condition):
+
+def _fetch_pending_for_source(sb, source, reparse, condition, fix_condition):
     """Page through pending rows for a single source. Querying one source at
     a time keeps the (OR filter + ORDER BY) query fast — running it across
     both sources at once times out at this table size."""
@@ -54,18 +57,28 @@ def _fetch_pending_for_source(sb, source, reparse, condition):
             .neq("description", "")
             .eq("source", source)
         )
-        if not reparse:
+        if fix_condition:
+            # One-off cleanup: rows with a non-null condition that isn't one
+            # of our canonical categories (raw scraped free text, typos,
+            # non-condition junk like a price note) — regardless of whether
+            # they've already been parsed for brand/model.
+            q = q.not_.is_("condition", "null").not_.in_("condition", sorted(CANONICAL_CONDITIONS))
+        elif not reparse:
             # Never-parsed rows, plus already-parsed legacy rows that predate
             # the brand/model fields — lets normal runs backfill those for
             # free instead of needing a separate one-off reparse pass.
             q = q.or_("llm_parsed_at.is.null,brand.is.null")
         if condition:
             q = q.eq("condition", condition)
-        # Prioritize genuinely recent listings (posted_date) over rows that
-        # were merely scraped/inserted recently — backfill inserts old ads
-        # today, so scraped_at would wrongly jump them ahead of the queue.
-        # scraped_at breaks ties, since posted_date has no time component.
-        q = q.order("posted_date", desc=True, nullsfirst=False).order("scraped_at", desc=True)
+        if not fix_condition:
+            # Prioritize genuinely recent listings (posted_date) over rows
+            # that were merely scraped/inserted recently — backfill inserts
+            # old ads today, so scraped_at would wrongly jump them ahead of
+            # the queue. scraped_at breaks ties (posted_date has no time
+            # component). Skipped for --fix-condition: combined with the
+            # NOT IN filter, ordering times out, and order doesn't matter
+            # for a one-off cleanup pass anyway.
+            q = q.order("posted_date", desc=True, nullsfirst=False).order("scraped_at", desc=True)
         result = q.range(offset, offset + FETCH_BATCH - 1).execute()
         rows = result.data
         if not rows:
@@ -76,13 +89,13 @@ def _fetch_pending_for_source(sb, source, reparse, condition):
         offset += FETCH_BATCH
 
 
-def fetch_pending(sb, source=None, reparse=False, limit=None, condition=None):
+def fetch_pending(sb, source=None, reparse=False, limit=None, condition=None, fix_condition=False):
     """Yield rows that need LLM parsing, including existing condition/seller_type to avoid overwriting.
 
     Round-robins between sources (when source is not fixed) so one source's
     backlog can't starve the other."""
     sources = [source] if source else ["pazar3", "reklama5"]
-    generators = [_fetch_pending_for_source(sb, s, reparse, condition) for s in sources]
+    generators = [_fetch_pending_for_source(sb, s, reparse, condition, fix_condition) for s in sources]
     fetched = 0
     while generators:
         for gen in list(generators):
@@ -110,6 +123,8 @@ def main():
     parser.add_argument("--source", default=None, choices=["reklama5", "pazar3"], help="Filter by source")
     parser.add_argument("--reparse", action="store_true", help="Re-run even on already-parsed ads")
     parser.add_argument("--condition", default=None, help="Only process ads with this condition (e.g. New)")
+    parser.add_argument("--fix-condition", action="store_true",
+                         help="One-off cleanup: reparse ads whose condition isn't one of the canonical categories")
     args = parser.parse_args()
 
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -123,7 +138,8 @@ def main():
     flush_every = 10
     pending_updates: list[dict] = []
 
-    for row in fetch_pending(sb, source=args.source, reparse=args.reparse, limit=args.limit, condition=args.condition):
+    for row in fetch_pending(sb, source=args.source, reparse=args.reparse, limit=args.limit,
+                              condition=args.condition, fix_condition=args.fix_condition):
         ad_url = row["ad_url"]
         title = row.get("title") or ""
         description = row.get("description") or ""
@@ -149,9 +165,12 @@ def main():
             "delivery_available": bool(parsed.delivery_available),
             "llm_parsed_at": datetime.now(timezone.utc).isoformat(),
         }
-        # Only fill condition/seller_type if the spider didn't already capture them
-        if not row.get("condition") and parsed.condition:
+        # condition: keep the existing value if it's already one of our
+        # canonical categories (a seller-selected dropdown value is a
+        # stronger signal than an LLM guess) — otherwise normalize/fill it.
+        if row.get("condition") not in CANONICAL_CONDITIONS and parsed.condition:
             update["condition"] = parsed.condition
+        # seller_type: only fill if the spider didn't already capture it
         if not row.get("seller_type") and parsed.seller_type:
             update["seller_type"] = parsed.seller_type
 
