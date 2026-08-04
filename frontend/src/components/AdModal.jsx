@@ -56,8 +56,16 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
     return notes
   })()
 
-  const isCheapAnomaly = currentAd.is_anomaly && currentAd.price_zscore <= 0
-  const isExpensiveAnomaly = currentAd.is_anomaly && currentAd.price_zscore > 0
+  const isGoodDeal = currentAd.good_price_deal
+  const isOverpriced = !isGoodDeal && currentAd.price_vs_new_ratio > 1
+  const referenceLabel = currentAd.reference_source === 'setec'
+    ? 'споредено со тековна цена на Setec.mk'
+    : currentAd.reference_source === 'marketplace'
+      ? 'споредено со оглас за нов истиот модел'
+      : null
+  const pctOfNew = currentAd.price_vs_new_ratio != null
+    ? Math.round(currentAd.price_vs_new_ratio * 100)
+    : null
 
   return (
     <div
@@ -118,36 +126,44 @@ export default function AdModal({ ad, onClose, isSaved, onWishlistToggle }) {
           </button>
         </div>
 
-        {/* Anomaly banners */}
-        {isCheapAnomaly && (
+        {/* Price-vs-new banners */}
+        {isGoodDeal && (
           <div className="shrink-0 px-5 py-2.5 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-100 dark:border-emerald-900/30">
             <div className="flex items-center gap-3">
               <svg className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.214.33-.403.713-.57 1.116-.334.804-.614 1.768-.84 2.734a31.365 31.365 0 00-.613 3.58 2.64 2.64 0 01-.945-1.067c-.328-.68-.398-1.534-.398-2.654A1 1 0 005.05 6.05 6.981 6.981 0 003 11a7 7 0 1011.95-4.95c-.592-.591-.98-.985-1.348-1.467-.363-.476-.724-1.063-1.207-2.03zM12.12 15.12A3 3 0 017 13s.879.5 2.5.5c0-1 .5-4 1.25-4.5.5 1 .786 1.293 1.371 1.879A2.99 2.99 0 0113 13a2.99 2.99 0 01-.879 2.121z" clipRule="evenodd" />
               </svg>
-              <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Детектирана добра цена</span>
-              <span className="text-xs text-emerald-600/70 dark:text-emerald-400/70">
-                {Math.abs(currentAd.price_zscore).toFixed(1)}σ под просекот за сличен производ
-              </span>
+              <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Добра цена</span>
+              {pctOfNew != null && (
+                <span className="text-xs text-emerald-600/70 dark:text-emerald-400/70">
+                  {pctOfNew}% од цена на нов уред
+                </span>
+              )}
             </div>
-            {currentAd.anomaly_reason && (
-              <p className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-300/70 pl-7 italic">{currentAd.anomaly_reason}</p>
+            {referenceLabel && (
+              <p className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-300/70 pl-7 italic">
+                {referenceLabel} ({Number(currentAd.reference_new_price_mkd).toLocaleString('mk-MK')} ден.)
+              </p>
             )}
           </div>
         )}
-        {isExpensiveAnomaly && (
+        {isOverpriced && (
           <div className="shrink-0 px-5 py-2.5 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-100 dark:border-amber-900/30">
             <div className="flex items-center gap-3">
               <svg className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
-              <span className="text-sm font-medium text-amber-700 dark:text-amber-300">Висока цена</span>
-              <span className="text-xs text-amber-600/70 dark:text-amber-400/70">
-                {Math.abs(currentAd.price_zscore).toFixed(1)}σ над просекот за сличен производ
-              </span>
+              <span className="text-sm font-medium text-amber-700 dark:text-amber-300">Прескапо</span>
+              {pctOfNew != null && (
+                <span className="text-xs text-amber-600/70 dark:text-amber-400/70">
+                  {pctOfNew}% од цена на нов уред
+                </span>
+              )}
             </div>
-            {currentAd.anomaly_reason && (
-              <p className="mt-1 text-xs text-amber-700/80 dark:text-amber-300/70 pl-7 italic">{currentAd.anomaly_reason}</p>
+            {referenceLabel && (
+              <p className="mt-1 text-xs text-amber-700/80 dark:text-amber-300/70 pl-7 italic">
+                {referenceLabel} ({Number(currentAd.reference_new_price_mkd).toLocaleString('mk-MK')} ден.)
+              </p>
             )}
           </div>
         )}

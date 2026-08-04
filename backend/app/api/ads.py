@@ -10,7 +10,9 @@ AD_FIELDS = (
     "ad_url, title, price_eur, price_mkd, currency, location, "
     "images, category, condition, source, scraped_at, posted_date, "
     "seller_name, seller_type, specs, delivery_available, description, seller_notes, "
-    "is_anomaly, price_zscore, anomaly_reason, cluster_id, cluster_label, ad_type"
+    "is_anomaly, price_zscore, anomaly_reason, cluster_id, cluster_label, ad_type, "
+    "brand, model, reference_new_price_mkd, reference_sample_size, reference_source, "
+    "price_vs_new_ratio, good_price_deal"
 )
 
 
@@ -23,7 +25,7 @@ def list_ads(
     max_price: float | None = None,
     q: str | None = None,
     sort: str = "newest",
-    anomaly_only: bool = False,
+    good_deal_only: bool = False,
     ad_type: str | None = None,
     page: int = Query(1, ge=1),
 ):
@@ -44,8 +46,8 @@ def list_ads(
         query = query.lte("price_eur", max_price)
     if q:
         query = query.ilike("title", f"%{q}%")
-    if anomaly_only:
-        query = query.eq("is_anomaly", True).lt("price_zscore", 0)
+    if good_deal_only:
+        query = query.eq("good_price_deal", True)
     if ad_type:
         query = query.eq("ad_type", ad_type)
 
@@ -77,7 +79,7 @@ def get_stats():
     r5 = sb.table("ads").select("ad_url", count="exact").eq("source", "reklama5").execute().count or 0
     p3 = sb.table("ads").select("ad_url", count="exact").eq("source", "pazar3").execute().count or 0
     dupes = sb.table("duplicates").select("id", count="exact").execute().count or 0
-    anomalies = sb.table("ads").select("ad_url", count="exact").eq("is_anomaly", True).execute().count or 0
+    good_deals = sb.table("ads").select("ad_url", count="exact").eq("good_price_deal", True).execute().count or 0
     services = sb.table("ads").select("ad_url", count="exact").eq("ad_type", "service").execute().count or 0
     wanted = sb.table("ads").select("ad_url", count="exact").eq("ad_type", "wanted").execute().count or 0
 
@@ -85,7 +87,7 @@ def get_stats():
         "total": total,
         "sources": {"reklama5": r5, "pazar3": p3},
         "duplicates": dupes,
-        "anomalies": anomalies,
+        "good_deals": good_deals,
         "ad_types": {"service": services, "wanted": wanted},
     }
 

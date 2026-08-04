@@ -16,7 +16,7 @@ const INITIAL_FILTERS = {
   max_price: '',
   q: '',
   sort: 'newest',
-  anomaly_only: false,
+  good_deal_only: false,
   ad_type: 'product',
   page: 1,
 }

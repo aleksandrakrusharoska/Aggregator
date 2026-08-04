@@ -39,8 +39,8 @@ function SkeletonRow() {
 function AdRow({ ad, onClick }) {
   const images = Array.isArray(ad.images) ? ad.images : (ad.image_url ? [ad.image_url] : [])
   const img = images[0]
-  const isCheapAnomaly = ad.is_anomaly && ad.price_zscore < 0
-  const isExpensiveAnomaly = ad.is_anomaly && ad.price_zscore > 0
+  const isGoodDeal = ad.good_price_deal
+  const isOverpriced = ad.price_vs_new_ratio > 1
 
   return (
     <article
@@ -75,14 +75,14 @@ function AdRow({ ad, onClick }) {
               {CONDITION_LABELS[ad.condition] || ad.condition}
             </span>
           )}
-          {isCheapAnomaly && (
+          {isGoodDeal && (
             <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">
               Добра цена
             </span>
           )}
-          {isExpensiveAnomaly && (
+          {!isGoodDeal && isOverpriced && (
             <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-              Висока цена
+              Прескапо
             </span>
           )}
           {ad.ad_type === 'service' && (
