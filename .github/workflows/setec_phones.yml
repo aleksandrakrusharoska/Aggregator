@@ -1,0 +1,39 @@
+name: Setec Phone Catalog
+
+on:
+  workflow_dispatch:  # trigger manually from GitHub Actions tab
+  schedule:
+    - cron: '0 5 * * *'  # daily at 05:00 UTC = 07:00 Macedonia time (UTC+2)
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # small fixed catalog (~300 products), should finish in under a minute
+
+    defaults:
+      run:
+        working-directory: scrapy_project
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: scrapy_project/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create .env file
+        run: |
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
+          echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
+
+      - name: Crawl Setec mobile phones catalog
+        run: |
+          scrapy crawl setec_phones \
+            -s LOG_LEVEL=INFO
