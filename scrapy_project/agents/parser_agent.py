@@ -19,9 +19,11 @@ Ads may be written in Macedonian, Albanian, Serbian, or English.
 Return ONLY a valid JSON object — no markdown, no code blocks, no explanation.
 
 CRITICAL RULES:
-- ONLY extract information EXPLICITLY written in the description. Do NOT invent or guess.
+- ONLY extract information EXPLICITLY written in the title/description. Do NOT invent or guess.
 - specs: key-value pairs of technical specs (RAM, storage, display, battery, processor, etc.) found in the text. Empty object if none mentioned.
 - condition: ONLY if explicitly mentioned. One of: "New", "Used - Like New", "Used", "For parts". Never put condition inside specs.
+- brand: the manufacturer, normalized to its common English name (e.g. "Apple", "Samsung", "Huawei", "Xiaomi"). null if not identifiable.
+- model: the specific model name/number, normalized to how it's commonly written, WITHOUT storage/color/condition/network words (e.g. "iPhone 11", "Galaxy S20+", "Galaxy A35 5G", "P30 Pro"). null if not identifiable.
 - seller_notes: seller personal comments (warranty, reason for selling, meeting place). null if none.
 - phone: first phone number found (Macedonian numbers start with 07, 02, 03). null if none.
 - delivery_available: true only if seller explicitly mentions delivery/shipping, otherwise false.
@@ -29,12 +31,14 @@ CRITICAL RULES:
 - If description is not about an electronics product, return all fields empty.
 
 Return exactly this structure:
-{"specs": {}, "condition": null, "seller_notes": null, "phone": null, "delivery_available": false, "seller_type": null}"""
+{"specs": {}, "condition": null, "brand": null, "model": null, "seller_notes": null, "phone": null, "delivery_available": false, "seller_type": null}"""
 
 
 class ParsedAdContent(BaseModel):
     specs: Dict[str, str] = Field(default_factory=dict)
     condition: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
     seller_notes: Optional[str] = None
     phone: Optional[str] = None
     delivery_available: bool = False
@@ -68,6 +72,10 @@ def _build_clients():
     return clients
 
 
+class AllProvidersExhausted(Exception):
+    """Raised when every configured LLM provider has hit its daily limit."""
+
+
 class RotatingParser:
     """Alternates requests between all available LLM providers."""
 
@@ -81,7 +89,7 @@ class RotatingParser:
             name, client = next(self._cycle)
             if name not in self._exhausted:
                 return name, client
-        raise RuntimeError("All LLM providers exhausted for this run.")
+        raise AllProvidersExhausted("All LLM providers exhausted for this run.")
 
     def mark_exhausted(self, name: str):
         self._exhausted.add(name)
@@ -115,6 +123,8 @@ def parse_ad(title: str, description: str, parser: RotatingParser = None) -> Par
             return ParsedAdContent(
                 specs={k: str(v) for k, v in (data.get("specs") or {}).items() if v and str(v).strip()},
                 condition=data.get("condition") or None,
+                brand=data.get("brand") or None,
+                model=data.get("model") or None,
                 seller_notes=data.get("seller_notes") or None,
                 phone=data.get("phone") or None,
                 delivery_available=bool(data.get("delivery_available", False)),

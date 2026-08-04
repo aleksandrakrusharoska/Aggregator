@@ -3,9 +3,10 @@ Batch-processes ads in Supabase with the LLM parser agent.
 
 Reads ads where:
   - description is not null/empty
-  - llm_parsed_at is null (not yet processed)
+  - llm_parsed_at is null (not yet processed), OR already processed but
+    missing brand (legacy rows from before brand/model were added)
 
-Writes back: specs, condition, seller_notes, phone,
+Writes back: specs, condition, brand, model, seller_notes, phone,
              delivery_available, seller_type, llm_parsed_at
 
 Usage:
@@ -13,6 +14,7 @@ Usage:
     python run_parser_agent.py --limit 20  # test run with 20 ads
     python run_parser_agent.py --source pazar3  # only one source
     python run_parser_agent.py --reparse   # reparse already-processed ads
+    python run_parser_agent.py --reparse --condition New  # reparse only New-condition ads (for reference prices)
 """
 import argparse
 import logging
@@ -24,7 +26,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from supabase import create_client
 
-from agents.parser_agent import ParsedAdContent, build_parser, parse_ad
+from agents.parser_agent import AllProvidersExhausted, ParsedAdContent, build_parser, parse_ad
 
 load_dotenv()
 logging.basicConfig(
@@ -39,36 +41,60 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 FETCH_BATCH = 50  # rows per Supabase page
 
 
-def fetch_pending(sb, source=None, reparse=False, limit=None):
-    """Yield rows that need LLM parsing, including existing condition/seller_type to avoid overwriting."""
+def _fetch_pending_for_source(sb, source, reparse, condition):
+    """Page through pending rows for a single source. Querying one source at
+    a time keeps the (OR filter + ORDER BY) query fast — running it across
+    both sources at once times out at this table size."""
     offset = 0
-    fetched = 0
     while True:
         q = (
             sb.table("ads")
             .select("ad_url, title, description, condition, seller_type")
             .not_.is_("description", "null")
             .neq("description", "")
+            .eq("source", source)
         )
         if not reparse:
-            q = q.is_("llm_parsed_at", "null")
-        if source:
-            q = q.eq("source", source)
-        page_limit = FETCH_BATCH
-        if limit is not None:
-            page_limit = min(FETCH_BATCH, limit - fetched)
-        result = q.range(offset, offset + page_limit - 1).execute()
+            # Never-parsed rows, plus already-parsed legacy rows that predate
+            # the brand/model fields — lets normal runs backfill those for
+            # free instead of needing a separate one-off reparse pass.
+            q = q.or_("llm_parsed_at.is.null,brand.is.null")
+        if condition:
+            q = q.eq("condition", condition)
+        # Prioritize genuinely recent listings (posted_date) over rows that
+        # were merely scraped/inserted recently — backfill inserts old ads
+        # today, so scraped_at would wrongly jump them ahead of the queue.
+        # scraped_at breaks ties, since posted_date has no time component.
+        q = q.order("posted_date", desc=True, nullsfirst=False).order("scraped_at", desc=True)
+        result = q.range(offset, offset + FETCH_BATCH - 1).execute()
         rows = result.data
         if not rows:
-            break
-        for row in rows:
+            return
+        yield from rows
+        if len(rows) < FETCH_BATCH:
+            return
+        offset += FETCH_BATCH
+
+
+def fetch_pending(sb, source=None, reparse=False, limit=None, condition=None):
+    """Yield rows that need LLM parsing, including existing condition/seller_type to avoid overwriting.
+
+    Round-robins between sources (when source is not fixed) so one source's
+    backlog can't starve the other."""
+    sources = [source] if source else ["pazar3", "reklama5"]
+    generators = [_fetch_pending_for_source(sb, s, reparse, condition) for s in sources]
+    fetched = 0
+    while generators:
+        for gen in list(generators):
+            try:
+                row = next(gen)
+            except StopIteration:
+                generators.remove(gen)
+                continue
             yield row
             fetched += 1
             if limit is not None and fetched >= limit:
                 return
-        if len(rows) < page_limit:
-            break
-        offset += page_limit
 
 
 def update_batch(sb, updates: list[dict]):
@@ -83,6 +109,7 @@ def main():
     parser.add_argument("--limit", type=int, default=None, help="Max ads to process")
     parser.add_argument("--source", default=None, choices=["reklama5", "pazar3"], help="Filter by source")
     parser.add_argument("--reparse", action="store_true", help="Re-run even on already-parsed ads")
+    parser.add_argument("--condition", default=None, help="Only process ads with this condition (e.g. New)")
     args = parser.parse_args()
 
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -96,13 +123,17 @@ def main():
     flush_every = 10
     pending_updates: list[dict] = []
 
-    for row in fetch_pending(sb, source=args.source, reparse=args.reparse, limit=args.limit):
+    for row in fetch_pending(sb, source=args.source, reparse=args.reparse, limit=args.limit, condition=args.condition):
         ad_url = row["ad_url"]
         title = row.get("title") or ""
         description = row.get("description") or ""
 
         log.info("[%d] Parsing: %s", processed + 1, title[:60])
-        parsed: ParsedAdContent = parse_ad(title, description, llm_parser)
+        try:
+            parsed: ParsedAdContent = parse_ad(title, description, llm_parser)
+        except AllProvidersExhausted:
+            log.warning("All LLM providers exhausted for today — stopping early (processed %d).", processed)
+            break
         time.sleep(4)  # stay under Groq free tier 30 req/min limit
 
         # Filter empty-string values from specs
@@ -111,6 +142,8 @@ def main():
         update: dict = {
             "ad_url": ad_url,
             "specs": clean_specs,
+            "brand": parsed.brand,
+            "model": parsed.model,
             "seller_notes": parsed.seller_notes,
             "phone": parsed.phone,
             "delivery_available": bool(parsed.delivery_available),
