@@ -50,11 +50,15 @@ def list_ads(
         query = query.eq("ad_type", ad_type)
 
     if sort == "price_asc":
-        query = query.order("price_eur", desc=False, nulls_first=False)
+        query = query.order("price_eur", desc=False, nullsfirst=False)
     elif sort == "price_desc":
-        query = query.order("price_eur", desc=True, nulls_first=False)
+        query = query.order("price_eur", desc=True, nullsfirst=False)
     else:
-        query = query.order("scraped_at", desc=True)
+        # posted_date is a date (no time component), so ties are common —
+        # break them with scraped_at for stable pagination. nullsfirst=False
+        # keeps ads with an unresolved posted_date (not yet backfilled) from
+        # sorting to the top.
+        query = query.order("posted_date", desc=True, nullsfirst=False).order("scraped_at", desc=True)
 
     result = query.range(offset, offset + PAGE_SIZE - 1).execute()
 
